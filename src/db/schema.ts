@@ -1,0 +1,152 @@
+import Dexie, { type Table } from 'dexie';
+
+export type UiLang = 'ko' | 'en';
+export type Level = 'beginner' | 'intermediate' | 'advanced';
+export type WordStatus = 'learning' | 'mastered' | 'archived';
+export type CardDir = 'en2ko' | 'ko2en';
+
+export interface ModelChoice {
+  lookup: string | null; // fast model: lookups, 쉬운 설명, packs
+  long: string | null; // stronger model: conversation, podcast scripts
+  tts: string | null; // multi-speaker TTS
+  available: string[]; // every generateContent-capable model the key can see
+  checkedAt: number;
+}
+
+export interface Profile {
+  ageRange: string;
+  occupation: string;
+  level: Level;
+  goals: string[];
+}
+
+export interface Settings {
+  id: 'app';
+  uiLang: UiLang;
+  apiKey: string;
+  models: ModelChoice | null;
+  profile: Profile;
+  dailyNewCards: number;
+  speech: { enVoice: string | null; koVoice: string | null; rate: number };
+}
+
+export interface DictShard {
+  shardId: string;
+  version: string;
+  data: unknown;
+}
+
+export interface AiEntry {
+  word: string;
+  entry: unknown; // same shape as a dictionary entry (defined in step 2)
+  model: string;
+  createdAt: number;
+}
+
+export interface EasyNote {
+  word: string;
+  text: string;
+  model: string;
+  createdAt: number;
+}
+
+export interface MyWord {
+  word: string;
+  status: WordStatus;
+  addedAt: number;
+  source: string;
+}
+
+export interface CardRow {
+  word: string;
+  dir: CardDir;
+  due: Date;
+  card: unknown; // ts-fsrs Card (step 4)
+}
+
+export interface ReviewLogRow {
+  id?: number;
+  word: string;
+  dir: CardDir;
+  rating: number;
+  source: 'review' | 'conversation';
+  ts: number;
+}
+
+export interface Pack {
+  id: string;
+  title: string;
+  level: Level | null;
+  words: string[];
+  generatedFrom: string | null; // profile hash for AI packs, null for fixed packs
+  createdAt: number;
+}
+
+export interface Chat {
+  id?: number;
+  scenario: string;
+  messages: { role: 'user' | 'model'; text: string; meta?: unknown }[];
+  wordsUsed: string[];
+  startedAt: number;
+}
+
+export interface Podcast {
+  id?: number;
+  title: string;
+  level: Level;
+  words: string[];
+  script: unknown;
+  audio: Blob | null;
+  audioSource: 'gemini' | 'webspeech';
+  createdAt: number;
+}
+
+class WordlyDB extends Dexie {
+  settings!: Table<Settings, string>;
+  dictShards!: Table<DictShard, string>;
+  aiEntries!: Table<AiEntry, string>;
+  easyNotes!: Table<EasyNote, string>;
+  myWords!: Table<MyWord, string>;
+  cards!: Table<CardRow, [string, CardDir]>;
+  reviewLogs!: Table<ReviewLogRow, number>;
+  packs!: Table<Pack, string>;
+  chats!: Table<Chat, number>;
+  podcasts!: Table<Podcast, number>;
+
+  constructor() {
+    super('wordly');
+    this.version(1).stores({
+      settings: 'id',
+      dictShards: 'shardId',
+      aiEntries: 'word',
+      easyNotes: 'word',
+      myWords: 'word, status, addedAt',
+      cards: '[word+dir], word, due',
+      reviewLogs: '++id, word, ts',
+      packs: 'id, createdAt',
+      chats: '++id, startedAt',
+      podcasts: '++id, createdAt',
+    });
+  }
+}
+
+export const db = new WordlyDB();
+
+export const defaultSettings: Settings = {
+  id: 'app',
+  uiLang: 'ko',
+  apiKey: '',
+  models: null,
+  profile: { ageRange: '', occupation: '', level: 'intermediate', goals: [] },
+  dailyNewCards: 10,
+  speech: { enVoice: null, koVoice: null, rate: 1 },
+};
+
+export async function loadSettings(): Promise<Settings> {
+  const s = await db.settings.get('app');
+  return { ...defaultSettings, ...s, profile: { ...defaultSettings.profile, ...s?.profile } };
+}
+
+export async function saveSettings(s: Settings): Promise<void> {
+  await db.settings.put(s);
+}

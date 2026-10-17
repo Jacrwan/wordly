@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.DS_Store
+# Dictionary source dumps (several GB)
+data-raw/
+.venv/
+__pycache__/
+# Never commit keys
+.env
+.env.*
+*.key
