@@ -6,7 +6,7 @@ import { Page } from '../components/Layout';
 import { buildView, findEntry, viewKo } from '../dict/lookup';
 import { db, type WordStatus } from '../db/schema';
 import type { StringKey } from '../i18n';
-import { buildSession, cachedClips, makeClips, type ClipItem, type Session } from '../speech/clips';
+import { batches, buildSession, cachedClips, makeClips, type ClipItem, type Session } from '../speech/clips';
 import { setMediaSession, SpeechQueue, type QueueState, type Segment } from '../speech/engine';
 import { useApp } from '../state';
 
@@ -135,7 +135,7 @@ export function Player() {
       ) : items.length === 0 ? (
         <p class="muted center">{t('player.empty')}</p>
       ) : mode === 'audio' ? (
-        <AudioPlayer items={items} rate={rate} onRate={saveRate} loop={loop} onLoop={setLoop}
+        <AudioPlayer key={source} items={items} rate={rate} onRate={saveRate} loop={loop} onLoop={setLoop}
           onFallback={(msg) => {
             setMode('speech');
             setNotice(msg);
@@ -212,10 +212,12 @@ function AudioPlayer({ items, rate, onRate, loop, onLoop, onFallback }: PlayerPr
   const conn = connFrom(settings);
   const models = ttsModels(settings);
   const cancel = useRef<AbortController | null>(null);
+  const alive = useRef(true);
 
   // Cached clips for this list; plays right away when every word has one.
   const check = async (playPartial = false) => {
     const clips = await cachedClips(items);
+    if (!alive.current) return;
     const missing = items.filter((it) => !clips.has(it.key));
     const session = buildSession(items, clips);
     if (session && (!missing.length || playPartial)) setPrep({ phase: 'ready', session, partial: missing.length > 0 });
@@ -223,10 +225,11 @@ function AudioPlayer({ items, rate, onRate, loop, onLoop, onFallback }: PlayerPr
   };
 
   useEffect(() => {
+    alive.current = true;
     setPrep({ phase: 'checking' });
     setError('');
-    check();
-    return () => cancel.current?.abort();
+    check().catch(() => alive.current && onFallback(t('player.audio.error')));
+    return () => { alive.current = false; cancel.current?.abort(); };
   }, [items]);
 
   const make = async (missing: Item[]) => {
@@ -251,10 +254,13 @@ function AudioPlayer({ items, rate, onRate, loop, onLoop, onFallback }: PlayerPr
     check(res.stopped !== 'error');
   };
 
-  if (!conn || !models.length) {
+  if (prep.phase !== 'ready' && prep.phase !== 'checking' && (!conn || !models.length)) {
     return (
       <section class="card center">
         <p>{t('player.audio.unavailable')}</p>
+        {prep.phase === 'need' && prep.ready > 0 && (
+          <button class="btn block" onClick={() => check(true)}>{t('player.audio.playReady', { n: prep.ready })}</button>
+        )}
         <button class="btn block" onClick={() => onFallback('')}>{t('player.audio.useDevice')}</button>
       </section>
     );
@@ -286,7 +292,7 @@ function AudioPlayer({ items, rate, onRate, loop, onLoop, onFallback }: PlayerPr
       ) : (
         <>
           <p>{t('player.audio.need', { n: prep.missing.length })}</p>
-          <p class="muted small">{t('player.audio.needHelp', { requests: Math.ceil(prep.missing.length / 8) })}</p>
+          <p class="muted small">{t('player.audio.needHelp', { requests: batches(prep.missing).length })}</p>
           <button class="btn primary block" onClick={() => make(prep.missing)}>{t('player.audio.make', { n: prep.missing.length })}</button>
           {prep.ready > 0 && (
             <button class="btn block gap-top" onClick={() => check(true)}>{t('player.audio.playReady', { n: prep.ready })}</button>
@@ -303,6 +309,7 @@ function SessionPlayer({ items, session, rate, onRate, loop, onLoop }: PlayerPro
   const el = useMemo(() => new Audio(), []);
   const [pos, setPos] = useState(0); // index into session.order
   const [playing, setPlaying] = useState(false);
+  const [playError, setPlayError] = useState(false);
   const posRef = useRef(0);
 
   const posAt = (time: number) => {
@@ -313,7 +320,7 @@ function SessionPlayer({ items, session, rate, onRate, loop, onLoop }: PlayerPro
   const seekTo = (p: number) => {
     const n = session.order.length;
     const next = loop ? (p + n) % n : Math.max(0, Math.min(n - 1, p));
-    el.currentTime = next === 0 ? 0 : session.starts[next] - 0.2;
+    el.currentTime = next === 0 ? 0 : session.starts[next];
     posRef.current = next;
     setPos(next);
   };
@@ -323,12 +330,17 @@ function SessionPlayer({ items, session, rate, onRate, loop, onLoop }: PlayerPro
     seekTo(el.currentTime - session.starts[p] > 1.5 ? p : p - 1);
   };
   const next = () => seekTo(posAt(el.currentTime) + 1);
-  const toggle = () => (el.paused ? el.play().catch(() => {}) : el.pause());
+  const play = () => {
+    setPlayError(false);
+    void el.play().catch(() => setPlayError(true));
+  };
+  const toggle = () => (el.paused ? play() : el.pause());
 
   useEffect(() => {
     const url = URL.createObjectURL(session.audio);
     el.src = url;
     el.preload = 'auto';
+    el.onerror = () => setPlayError(true);
     el.ontimeupdate = () => {
       const p = posAt(el.currentTime);
       if (p !== posRef.current) {
@@ -336,8 +348,14 @@ function SessionPlayer({ items, session, rate, onRate, loop, onLoop }: PlayerPro
         setPos(p);
       }
     };
-    el.onplay = () => setPlaying(true);
-    el.onpause = el.onended = () => setPlaying(false);
+    el.onplay = () => {
+      setPlaying(true);
+      if (navigator.mediaSession) navigator.mediaSession.playbackState = 'playing';
+    };
+    el.onpause = el.onended = () => {
+      setPlaying(false);
+      if (navigator.mediaSession) navigator.mediaSession.playbackState = 'paused';
+    };
     // Rate resets when a new file loads in some browsers.
     el.onloadedmetadata = () => (el.playbackRate = rate);
     return () => {
@@ -345,6 +363,14 @@ function SessionPlayer({ items, session, rate, onRate, loop, onLoop }: PlayerPro
       el.removeAttribute('src');
       el.load();
       URL.revokeObjectURL(url);
+      el.ontimeupdate = el.onplay = el.onpause = el.onended = el.onloadedmetadata = el.onerror = null;
+      if (navigator.mediaSession) {
+        navigator.mediaSession.playbackState = 'none';
+        navigator.mediaSession.metadata = null;
+        for (const action of ['play', 'pause', 'nexttrack', 'previoustrack'] as const) {
+          try { navigator.mediaSession.setActionHandler(action, null); } catch { /* Unsupported action. */ }
+        }
+      }
     };
   }, [session]);
 
@@ -360,13 +386,14 @@ function SessionPlayer({ items, session, rate, onRate, loop, onLoop }: PlayerPro
   const current = items[index];
   useEffect(() => {
     if (current) {
-      setMediaSession(current.word, { play: () => el.play(), pause: () => el.pause(), next, prev }, current.ko.join(', '));
+      setMediaSession(current.word, { play, pause: () => el.pause(), next, prev }, current.ko.join(', '));
     }
   }, [current?.key, loop]);
 
   const has = new Set(session.order);
   return (
     <>
+      {playError && <p class="status error small">{t('player.audio.playError')}</p>}
       <NowPlaying items={items} index={index} position={{ n: pos + 1, total: session.order.length }} />
       <Transport playing={playing} onPrev={prev} onToggle={toggle} onNext={next} />
       <SpeedLoop rate={rate} onRate={onRate} loop={loop} onLoop={onLoop} />

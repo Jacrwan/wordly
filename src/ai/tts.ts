@@ -24,6 +24,7 @@ type AudioResponse = { candidates?: { content?: { parts?: { inlineData?: { mimeT
  * once. Throws a rate-limit GeminiError when nothing is left (`daily` when the day's quota is gone).
  */
 export async function synthesize(conn: Conn, models: string[], body: object, opts: { onWait?: (ms: number) => void; cancel?: AbortSignal } = {}): Promise<{ pcm: Int16Array; model: string }> {
+  if (opts.cancel?.aborted) throw new GeminiError('cancelled', 'http', 0);
   const list = byHealth(models);
   let waited = false;
   for (;;) {
@@ -31,6 +32,7 @@ export async function synthesize(conn: Conn, models: string[], body: object, opt
     let shortestWait = Infinity;
     let allDaily = true;
     for (const model of list) {
+      if (opts.cancel?.aborted) throw new GeminiError('cancelled', 'http', 0);
       try {
         const res = await request<AudioResponse>(conn, `models/${model}:generateContent`, { method: 'POST', body: JSON.stringify(body) }, TIMEOUT_MS, opts.cancel);
         const inline = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData;

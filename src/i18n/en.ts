@@ -123,6 +123,7 @@ export const en: Record<StringKey, string> = {
   'player.lockNote': 'Playback stops when the screen locks. To listen with the screen locked, choose "Lock-screen mode" above.',
   'player.mode.speech': 'Device voice',
   'player.mode.audio': 'Lock-screen mode',
+  'player.audio.playError': 'Could not play the audio. Tap Play to try again.',
   'player.audio.lockOk': 'Keeps playing with the screen locked. Skip words from the lock screen.',
   'player.audio.need': '{n} words don\'t have AI audio yet.',
   'player.audio.needHelp': 'Each word is voiced once and saved on this device, so it plays instantly next time. (About {requests} AI requests)',

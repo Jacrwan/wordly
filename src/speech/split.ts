@@ -35,6 +35,8 @@ interface Pause {
  * edge silence. `voices[i]` (0 or 1) is which of the two voices read entry i.
  */
 export function splitAtPauses(pcm: Int16Array, entries: string[][], voices?: number[]): Int16Array[] {
+  if (!entries.length) return [];
+  if (entries.some((lines) => !lines.length)) throw new Error('Empty speech entry');
   const frames = Math.floor(pcm.length / FRAME);
   const rms = new Float32Array(frames);
   for (let f = 0; f < frames; f++) {
@@ -50,6 +52,7 @@ export function splitAtPauses(pcm: Int16Array, entries: string[][], voices?: num
 
   let first = 0;
   while (first < frames && quiet[first]) first++;
+  if (first >= frames) throw new Error('TTS returned silence');
   let last = frames - 1;
   while (last > first && quiet[last]) last--;
   const pauses: Pause[] = [];
@@ -76,7 +79,8 @@ export function splitAtPauses(pcm: Int16Array, entries: string[][], voices?: num
         rates = refit(a.segments);
       }
     }
-    cuts = best?.cuts ?? proportionalCuts(sentences, pauses, first, last);
+    if (!best) throw new Error('Cannot locate word boundaries in TTS audio');
+    cuts = best.cuts;
   }
   const bounds = [0, ...cuts.map((c) => Math.round(c) * FRAME), pcm.length];
   return entries.map((_, i) => trim(pcm.subarray(bounds[i], bounds[i + 1]), threshold));
@@ -290,32 +294,6 @@ function alignSentences(entries: Rates[][], pauses: Pause[], first: number, last
     a = a0;
   }
   return cuts.length === entries.length - 1 ? { cuts, segments, cost: cost[m][K] } : null;
-}
-
-/** Fallback: cuts by estimated length, each moved to the longest pause nearby. */
-function proportionalCuts(entries: Rates[][], pauses: Pause[], first: number, last: number): number[] {
-  const lengths = entries.map((lines) => lines.reduce((n, f) => n + dot(f, PRIOR), 0));
-  const total = lengths.reduce((a, b) => a + b, 0) || 1;
-  const span = last - first + 1;
-  const window = (span / lengths.length) * 0.5;
-  const cuts: number[] = [];
-  let acc = 0;
-  let prev = first;
-  for (let k = 0; k < lengths.length - 1; k++) {
-    acc += lengths[k];
-    const expected = first + (span * acc) / total;
-    let best: { mid: number; score: number } | null = null;
-    for (const p of pauses) {
-      const dist = Math.abs(p.mid - expected);
-      if (p.mid <= prev || dist > window) continue;
-      const score = p.len / (1 + (2 * dist) / window);
-      if (!best || score > best.score) best = { mid: p.mid, score };
-    }
-    const cut = Math.max(prev + 1, Math.round(best?.mid ?? expected));
-    cuts.push(cut);
-    prev = cut;
-  }
-  return cuts;
 }
 
 function trim(pcm: Int16Array, threshold: number): Int16Array {

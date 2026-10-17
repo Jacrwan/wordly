@@ -14,6 +14,8 @@ import { splitAtPauses } from './split';
 // The podcast's two-speaker request shape (known to work with the Flash TTS models).
 const SPEAKERS = [{ speaker: 'Mina', voice: 'Kore' }, { speaker: 'Jake', voice: 'Puck' }];
 const DETAIL: ClipDetail = 'full';
+// Invalidate clips produced by the earlier, inaccurate length-only splitter.
+const CLIP_VERSION = 2;
 const BATCH_WORDS = 8;
 const BATCH_CHARS = 900; // ≈ 60 s of speech per request
 const LEAD_S = 0.4; // silence before the first word of a session
@@ -41,7 +43,7 @@ export async function cachedClips(items: ClipItem[]): Promise<Map<string, WordCl
   const rows = await db.wordClips.bulkGet(items.map((it) => [it.key, DETAIL] as [string, ClipDetail]));
   const out = new Map<string, WordClip>();
   rows.forEach((row, i) => {
-    if (row && row.text === clipText(items[i]) && SPEAKERS.some((s) => s.voice === row.voice)) out.set(items[i].key, row);
+    if (row && row.version === CLIP_VERSION && row.text === clipText(items[i]) && SPEAKERS.some((s) => s.voice === row.voice)) out.set(items[i].key, row);
   });
   return out;
 }
@@ -58,15 +60,18 @@ export type MakeResult = { made: number; stopped?: 'quota' | 'cancelled' | 'erro
 export async function makeClips(conn: Conn, models: string[], items: ClipItem[], onProgress: (p: MakeProgress) => void, cancel: AbortSignal): Promise<MakeResult> {
   let made = 0;
   for (const batch of batches(items)) {
+    if (cancel.aborted) return { made, stopped: 'cancelled' };
     onProgress({ done: made, total: items.length });
     try {
       const texts = batch.map(clipText);
       const { pcm, model } = await synthesize(conn, models, ttsBody(texts), { cancel, onWait: (waitMs) => onProgress({ done: made, total: items.length, waitMs }) });
+      if (cancel.aborted) return { made, stopped: 'cancelled' };
       const voices = batch.map((_, i) => i % 2);
       const pieces = splitAtPauses(pcm, texts.map((t) => t.split('\n')), voices);
       const now = Date.now();
       await db.wordClips.bulkPut(batch.map((it, i) => ({
         word: it.key,
+        version: CLIP_VERSION,
         detail: DETAIL,
         text: texts[i],
         voice: SPEAKERS[voices[i]].voice,
@@ -86,7 +91,7 @@ export async function makeClips(conn: Conn, models: string[], items: ClipItem[],
   return { made };
 }
 
-function batches(items: ClipItem[]): ClipItem[][] {
+export function batches(items: ClipItem[]): ClipItem[][] {
   const out: ClipItem[][] = [];
   let cur: ClipItem[] = [];
   let size = 0;

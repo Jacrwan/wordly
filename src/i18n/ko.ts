@@ -121,6 +121,7 @@ export const ko = {
   'player.lockNote': '화면을 잠그면 재생이 멈춰요. 잠근 채로 들으려면 위에서 ‘화면 잠금 재생’을 고르세요.',
   'player.mode.speech': '기기 음성',
   'player.mode.audio': '화면 잠금 재생',
+  'player.audio.playError': '음성을 재생하지 못했어요. 재생 버튼을 눌러 다시 시도해 주세요.',
   'player.audio.lockOk': '화면을 잠가도 계속 들을 수 있어요. 잠금 화면에서 이전·다음 단어로 넘길 수 있어요.',
   'player.audio.need': 'AI 음성이 아직 없는 단어가 {n}개 있어요.',
   'player.audio.needHelp': '단어마다 한 번만 만들어 기기에 저장해요. 다음부터는 바로 재생돼요. (AI 요청 약 {requests}번)',

@@ -22,7 +22,7 @@ The page records what was spoken or played while it was hidden.
 
 - The **word player** and **text reader** (Web Speech) work in the background when switching apps, but **stop when the screen locks**. The player tells the user this.
 - **Podcasts (step 8)** will use Gemini TTS audio files played through `<audio>`, so they keep playing with the screen locked, as the brief expected.
-- **Word player, lock-screen mode:** 단어 듣기 → **화면 잠금 재생**. Each word's segment (word → Korean → definition → synonyms) is voiced once by Gemini TTS (voice Kore), cut out of a batch of up to 8 words per request, and cached in IndexedDB (`wordClips`). A listening session joins the cached clips into one WAV played by a single `<audio>` element, so it is the same kind of playback that passed test B. When the day's TTS quota runs out before any clip exists, the player switches back to device voices.
+- **Word player, lock-screen mode:** 단어 듣기 → **화면 잠금 재생**. Each word's segment (word → Korean → definition → synonyms) is voiced once by Gemini TTS (alternating Kore and Puck voices), cut out of a batch of up to 8 words / 900 characters per request, and cached in IndexedDB (`wordClips`). A listening session joins the cached clips into one WAV played by a single `<audio>` element, so it is the same kind of playback that passed test B. When the day's TTS quota runs out before any clip exists, the player switches back to device voices.
 
 ## Phone test: lock-screen word player
 
@@ -38,3 +38,17 @@ On the iPhone, in the home-screen app, with a family code set and at least 5 sav
 8. Optional: turn on 반복 (loop) and lock the screen; it should start over after the last word.
 
 Report anything that stops, words that are cut off or include the next word, and whether speed changes sound OK.
+
+## Completion checks (2026-10-17)
+
+Recovered Claude's three commits on `codex/lock-screen-player`. The follow-up fixes invalidate the old incorrectly split cache entries, allow cached playback without Gemini credentials, count the character limit in the request estimate, prevent cancelled jobs from starting requests, correct paused seeking, expose playback errors, and clear Media Session handlers when audio playback is unmounted. Silent audio or audio with no feasible sentence alignment is rejected instead of using proportional cuts.
+
+Verified locally:
+
+- `npx tsc --noEmit` and `npm run build` pass.
+- `node tests/split.mjs`: 100 seeded synthetic batches, including short headwords, slower Korean, alternating/variable pitch, internal comma pauses and variable sentence gaps; no misplaced cuts in these fixtures. Silent/unsplittable audio is rejected.
+- Isolated browser harness (`tests/player.html`): four clips from one mocked TTS request; valid 24 kHz, 16-bit mono WAV and matching session duration; cache invalidation; cancellation; all/learning/due/mastered filters; playback, automatic word progression, next/previous and matching Media Session title.
+- After reload: zero TTS requests. Cached playback also works with credentials/model settings removed. Cards, review logs and saved-word state remain unchanged.
+- Mocked daily quota: partial cache remains playable with unavailable words disabled; an empty cache switches to device speech and explains the lock-screen limitation.
+
+**Still unverified:** real speech alignment with the alternating voices, and the physical iPhone checklist above. The one attempted live retest was rejected by the proxy with HTTP 401 (`Wrong family code`), before reaching Gemini. The user chose to finish with live verification marked blocked. Synthetic pitch fixtures do not prove that every natural speech batch will split correctly. Old clips need regeneration once valid access is restored.

@@ -110,6 +110,7 @@ export interface Podcast {
 
 /** One saved word read aloud by Gemini TTS, for the lock-screen player (see speech/clips.ts). */
 export interface WordClip {
+  version?: number; // absent on old, incorrectly split clips
   word: string; // myWords key
   detail: ClipDetail;
   text: string; // what was read; a different text (e.g. a refreshed definition) means a new clip
