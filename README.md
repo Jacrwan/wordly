@@ -2,7 +2,7 @@
 
 An English vocabulary app for Korean speakers. It's an installable PWA (Progressive Web App) that runs fully on the phone. There are no accounts, and every bit of user data stays in the device's IndexedDB. The only server is a tiny Cloudflare Worker that holds the Gemini key. The UI is Korean by default and can be switched to English.
 
-> **Status:** step 1 of 8 (PWA shell + Settings) is done. Live at https://jacrwan.github.io/wordly/. See [docs/PLAN.md](docs/PLAN.md) for the build order, the data model and the per-step phone test checklists.
+> **Status:** steps 1–2 of 8 are done (PWA shell, Settings, Gemini proxy, offline dictionary data). Live at https://jacrwan.github.io/wordly/. See [docs/PLAN.md](docs/PLAN.md) for the build order, the data model and the per-step phone test checklists.
 
 ## Features
 
@@ -65,8 +65,10 @@ The dictionary build is only needed when you regenerate the data:
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r scripts/requirements.txt
-python scripts/build_dict.py      # downloads sources into /data-raw, writes /public/data
+python -I scripts/build_dict.py --raw data-raw --out public/data   # downloads sources, writes /public/data
 ```
+
+The build is deterministic and takes about a minute; see [docs/dictionary-report.md](docs/dictionary-report.md) for size and coverage.
 
 ## Gemini proxy (Cloudflare Worker)
 

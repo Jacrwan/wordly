@@ -100,12 +100,21 @@ This plan covers eight steps, built in order. Each step ends with a **phone chec
 
 **Size plan.** Target 30 MB or less raw, at roughly 800 B per word × 30k ≈ 24 MB plus the Korean index. GitHub Pages serves JSON gzipped, so actual downloads are about 4× smaller.
 
-**Entry shape** (shared by the dictionary, AI gap-fill and the result card)
+**Entry shape** (as built; shared by the dictionary, AI gap-fill and the result card)
 ```jsonc
-{ "w": "apply", "r": 812, "ipa": "/əˈplaɪ/", "audio": "https://upload.wikimedia.org/…mp3",
-  "pos": [{ "p": "verb", "senses": [{ "g": "To make a formal request", "ko": ["지원하다","신청하다"], "ex": ["…"] }] }],
-  "syn": ["…"], "ant": ["…"], "pairs": [{ "en": "…", "ko": "…" }], "ai": [] /* AI-filled field names */ }
+{ "w": "apply", "r": 812, "ipa": "/əˈplaɪ/",
+  "au": "3/3f/En-us-apply.ogg",            // Commons audio: {audioBase}{au}/{basename(au)}.mp3, or a full URL
+  "pos": [{ "p": "verb", "s": [{ "g": "To submit oneself as a candidate…", "ko": ["신청하다","지원하다"], "ex": ["…"] }] }],
+  "ko": ["…"],                             // word-level Korean that couldn't be tied to a sense
+  "syn": ["…"], "ant": ["…"],
+  "tt": [["English sentence", "한국어 문장"]], // Tatoeba pairs, shortest first, max 3
+  "of": ["year"], "ofKo": ["년","해"],      // inflected form with its own senses; Korean borrowed from the base word
+  "ai": [] }                               // added at runtime: names of AI-filled fields
+// Inflection pointer: { "w": "went", "to": "go", "r": 300 }
 ```
+Shard file: `{ "v": version, "e": { key: entry } }`, key = lowercase word. Shard id = first two characters of the key, with anything outside a–z replaced by `_` ("a" → `a_`, "e-mail" → `e_`). Korean index shard `ko/NN.json` maps a Korean term (plus its 하다/되다/시키다 stem) to up to 15 English keys sorted by rank. NN is the first syllable's initial consonant (00–18), or `xx` for anything else.
+
+**Built 2026-10-17** (`docs/dictionary-report.md` has the full report): 44,015 entries (36,647 words, 7,368 phrases) + 11,369 inflection pointers, **21.9 MB raw / 7.8 MB gzipped**, 560 English shards + 20 Korean shards. Korean coverage for single words, direct or borrowed from the base word: **93%** of the top 1k, **91%** of the top 3k, **81%** of the top 10k, **62%** of the top 30k.
 
 **Offline.** Shards download on first lookup and are stored in `dictShards`. Settings also has **Download full dictionary** for complete offline use.
 
