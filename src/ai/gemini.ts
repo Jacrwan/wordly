@@ -125,6 +125,18 @@ function pickFamily(ids: string[], family: 'flash' | 'pro'): string | null {
   return newest(preview);
 }
 
+/**
+ * Models for conversation, best first: the Pro model, then the fast model, then other full
+ * Flash versions and Lite. On the free tier each has its own small daily allowance, so a long
+ * chat can move down the list instead of stopping.
+ */
+export function chatModels(choice: ModelChoice | null): string[] {
+  if (!choice) return [];
+  const extra = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview'];
+  const list = [choice.long, choice.lookup, ...extra.filter((m) => choice.available.includes(m)), ...lookupModels(choice).slice(1)];
+  return [...new Set(list.filter((m): m is string => !!m))];
+}
+
 /** The fast model plus a lighter one with its own rate limit, for lookups and notes. */
 export function lookupModels(choice: ModelChoice | null): string[] {
   if (!choice?.lookup) return [];
@@ -153,6 +165,8 @@ export interface JsonRequest {
   models: string[];
   system: string;
   prompt: string;
+  /** Earlier turns of a conversation, sent before `prompt` (which is the newest user turn). */
+  history?: { role: 'user' | 'model'; text: string }[];
   schema: object; // Gemini responseSchema (OpenAPI subset)
   temperature?: number;
   /** "low" skips most hidden reasoning: ~3 s instead of ~4+ s for dictionary-style answers. */
@@ -178,6 +192,8 @@ export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<{ d
       try {
         return { data: await generateOnce<T>(conn, model, req), model };
       } catch (e) {
+        // A model this key can't use (e.g. retired, or not on the free tier): try the next one.
+        if (e instanceof GeminiError && e.status === 404 && model !== models[models.length - 1]) continue;
         if (!(e instanceof GeminiError) || e.kind !== 'rate-limit') throw e;
         shortestWait = Math.min(shortestWait, e.retryAfterMs ?? 60_000);
         if (model === models[models.length - 1] && (waited || shortestWait > MAX_RETRY_WAIT_MS)) throw e;
@@ -192,7 +208,10 @@ export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<{ d
 async function generateOnce<T>(conn: Conn, model: string, req: JsonRequest, withThinking = true): Promise<T> {
   const body = {
     systemInstruction: { parts: [{ text: req.system }] },
-    contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
+    contents: [
+      ...(req.history ?? []).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
+      { role: 'user', parts: [{ text: req.prompt }] },
+    ],
     generationConfig: {
       responseMimeType: 'application/json',
       responseSchema: req.schema,

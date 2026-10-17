@@ -3,6 +3,7 @@ import { Banners, TabBar } from './components/Layout';
 import { useRoute } from './router';
 import { About } from './screens/About';
 import { AudioTest } from './screens/AudioTest';
+import { Chat } from './screens/Chat';
 import { Packs, PackScreen } from './screens/Packs';
 import { Player } from './screens/Player';
 import { Reader } from './screens/Reader';
@@ -33,7 +34,7 @@ export function App() {
         {route === 'audiotest' && <AudioTest />}
         {route === 'packs' && <Packs />}
         {route === 'pack' && param && <PackScreen key={param} id={param} />}
-        {route === 'chat' && <Placeholder title="more.chat" step={7} />}
+        {route === 'chat' && <Chat key={param ?? 'picker'} scenarioId={param} />}
         {route === 'podcast' && <Placeholder title="more.podcast" step={8} />}
       </div>
       <TabBar route={route} />
