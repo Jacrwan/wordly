@@ -1,4 +1,5 @@
 import { Fragment, type ComponentChildren } from 'preact';
+import { createPortal } from 'preact/compat';
 import { useEffect, useMemo, useState } from 'preact/hooks';
 import { Page } from '../components/Layout';
 import { SpeechQueue, type Lang, type QueueState, type Segment } from '../speech/engine';
@@ -155,7 +156,9 @@ export function Sheet({ onClose, children }: { onClose: () => void; children: Co
     addEventListener('keydown', onKey);
     return () => removeEventListener('keydown', onKey);
   }, []);
-  return (
+  // Rendered into <body>: inside the page's scroll area, iOS clips fixed elements to that area,
+  // which hid the bottom of the sheet (and its save button) behind the tab bar.
+  return createPortal(
     <div class="sheet-backdrop" onClick={onClose}>
       <div class="sheet" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
         <div class="sheet-bar">
@@ -163,6 +166,7 @@ export function Sheet({ onClose, children }: { onClose: () => void; children: Co
         </div>
         <div class="sheet-body">{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

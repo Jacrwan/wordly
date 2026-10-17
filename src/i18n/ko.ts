@@ -118,7 +118,7 @@ export const ko = {
   'player.next': '다음 단어',
   'player.speed': '속도',
   'player.loop': '반복',
-  'player.lockNote': '아이폰에서 화면이 꺼지면 재생이 멈출 수 있어요. (테스트 중)',
+  'player.lockNote': '화면을 잠그면 재생이 멈춰요. 다른 앱으로 이동해도 계속 들을 수 있어요. 잠금 화면 재생은 팟캐스트 단계에서 추가됩니다.',
 
   'reader.placeholder': '읽고 싶은 영어 글을 붙여넣거나 입력하세요.',
   'reader.sample': '예시 글',

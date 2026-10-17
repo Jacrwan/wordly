@@ -120,7 +120,7 @@ export const en: Record<StringKey, string> = {
   'player.next': 'Next word',
   'player.speed': 'Speed',
   'player.loop': 'Loop',
-  'player.lockNote': 'On iPhone, playback may stop when the screen locks. (Being tested.)',
+  'player.lockNote': 'Playback stops when the screen locks, but keeps going if you switch apps. Lock-screen playback arrives with the podcast step.',
 
   'reader.placeholder': 'Paste or type English text to read.',
   'reader.sample': 'Sample text',
