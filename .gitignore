@@ -9,3 +9,7 @@ __pycache__/
 .env
 .env.*
 *.key
+
+# Cloudflare Worker local secrets
+.dev.vars
+.wrangler/

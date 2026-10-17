@@ -1,6 +1,6 @@
 # Wordly
 
-An English vocabulary app for Korean speakers. It's an installable PWA (Progressive Web App) that runs fully on the phone. There's no backend and no accounts, and every bit of user data stays in the device's IndexedDB. The UI is Korean by default and can be switched to English.
+An English vocabulary app for Korean speakers. It's an installable PWA (Progressive Web App) that runs fully on the phone. There are no accounts, and every bit of user data stays in the device's IndexedDB. The only server is a tiny Cloudflare Worker that holds the Gemini key. The UI is Korean by default and can be switched to English.
 
 > **Status:** step 1 of 8 (PWA shell + Settings) is done. Live at https://jacrwan.github.io/wordly/. See [docs/PLAN.md](docs/PLAN.md) for the build order, the data model and the per-step phone test checklists.
 
@@ -26,7 +26,7 @@ Mastery only goes up through **active recall**: reviewing a word, or using it co
 - **vite-plugin-pwa** (Workbox) generates the manifest and service worker.
 - **Dexie** wraps IndexedDB.
 - **ts-fsrs** does the spaced-repetition scheduling.
-- **Google Gemini API** is called directly from the browser with the user's own key.
+- **Google Gemini API**, reached through a small **Cloudflare Worker** proxy (`/worker`) that holds the key. Phones unlock it with a family code.
 - **Web Speech API** handles speech synthesis and, where supported, speech recognition.
 - **GitHub Pages** hosts the app and **GitHub Actions** deploys it.
 - **Python 3** scripts in `/scripts` build the dictionary once. Their output is committed.
@@ -35,6 +35,7 @@ Mastery only goes up through **active recall**: reviewing a word, or using it co
 
 ```
 /scripts          Python dictionary build (run once, by hand)
+/worker           Cloudflare Worker: Gemini proxy (holds the API key)
 /data-raw         Downloaded source dumps (gitignored, several GB)
 /public/data/dict Sharded English dictionary JSON (committed), e.g. ap.json
 /public/data/ko   Korean → English reverse index shards (committed)
@@ -67,20 +68,35 @@ pip install -r scripts/requirements.txt
 python scripts/build_dict.py      # downloads sources into /data-raw, writes /public/data
 ```
 
-## Gemini API key
+## Gemini proxy (Cloudflare Worker)
 
-1. Create a key at [Google AI Studio](https://aistudio.google.com/apikey).
-2. In the app, open **설정 (Settings) → Gemini API key**, paste the key and tap **Test**.
-3. The key is saved on this device only. It is **never** committed or sent anywhere except `generativelanguage.googleapis.com`.
+The app is static, so it can't keep a secret. It calls `/worker` instead. The Worker:
 
-Recommended: in Google Cloud Console, restrict the key to the HTTP referrer `https://<user>.github.io/*` and set a usage quota. A key used from the browser can be read by anyone holding the unlocked phone.
+- checks the `X-Family-Code` header against the `FAMILY_CODE` secret, and locks out an IP after 10 wrong codes in a minute,
+- adds the `GEMINI_API_KEY` secret and forwards only the Gemini endpoints the app uses (list models, generate, stream, count tokens),
+- allows requests only from the app's origins, and caps total use at 60 requests a minute.
+
+One-time setup (the secrets are typed into Wrangler and never committed):
+
+```bash
+cd worker
+npm install
+npx wrangler login
+npx wrangler secret put GEMINI_API_KEY
+npx wrangler secret put FAMILY_CODE
+npx wrangler deploy
+```
+
+Put the deployed `https://wordly-proxy.<subdomain>.workers.dev` URL in `src/ai/config.ts`. To run the Worker locally, copy `worker/.dev.vars.example` to `worker/.dev.vars`, then run `npm run dev` in `/worker`, and set `VITE_PROXY_URL=http://localhost:8787` in `.env.development.local`.
+
+In the app: **설정 → AI 연결 → 가족 코드**, entered once per phone. Under **고급**, a user can paste their own AI Studio key instead. That key stays on the device and takes priority over the proxy.
 
 ## Install on iPhone (아이폰에 설치하기)
 
 1. **Safari**에서 앱 주소를 엽니다. Chrome에서는 홈 화면 추가가 제대로 되지 않을 수 있습니다.
 2. 아래쪽 **공유 버튼(□↑)** → **홈 화면에 추가**를 누릅니다.
 3. 홈 화면에 생긴 **Wordly** 아이콘으로 앱을 엽니다.
-4. **설정**에서 Gemini API 키를 입력합니다. 홈 화면 앱은 Safari와 저장 공간이 따로라서, 설치한 **뒤에** 앱 안에서 입력해야 합니다.
+4. **더보기 → 설정 → AI 연결**에 **가족 코드**를 한 번 입력하고 **연결 확인**을 누릅니다. 홈 화면 앱은 Safari와 저장 공간이 따로라서, 설치한 **뒤에** 앱 안에서 입력해야 합니다.
 
 All data lives on the phone. Use **Settings → Backup** to export your words before you switch phones or delete the app.
 

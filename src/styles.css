@@ -284,3 +284,7 @@ select.input {
 .center { text-align: center; }
 
 .diag { white-space: pre-wrap; margin-top: 8px; }
+.flush { margin: 0; }
+.gap-top { margin-top: 8px; }
+.advanced { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 12px; }
+.advanced summary { min-height: 44px; display: flex; align-items: center; font-weight: 600; color: var(--muted); cursor: pointer; }

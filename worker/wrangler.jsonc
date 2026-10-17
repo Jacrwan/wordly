@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "wordly-proxy",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "observability": { "enabled": true },
+  "vars": {
+    // Browser origins allowed to call the proxy (comma-separated).
+    "ALLOWED_ORIGINS": "https://jacrwan.github.io,http://localhost:5173,http://localhost:4173"
+  },
+  // Secrets (set with `npx wrangler secret put <NAME>`, never committed):
+  //   GEMINI_API_KEY  – the Google AI Studio key
+  //   FAMILY_CODE     – the code each phone enters once
+  "ratelimits": [
+    // Wrong family codes: slows down guessing.
+    { "name": "FAIL_LIMITER", "namespace_id": "4101", "simple": { "limit": 10, "period": 60 } },
+    // All proxied calls: caps how fast anyone (even with the code) can spend the quota.
+    { "name": "USE_LIMITER", "namespace_id": "4102", "simple": { "limit": 60, "period": 60 } }
+  ]
+}

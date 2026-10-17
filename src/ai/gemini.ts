@@ -1,12 +1,30 @@
-import type { ModelChoice } from '../db/schema';
+import type { ModelChoice, Settings } from '../db/schema';
+import { PROXY_URL } from './config';
 
-const BASE = 'https://generativelanguage.googleapis.com/v1beta';
+const GOOGLE = 'https://generativelanguage.googleapis.com';
+
+/** How the app reaches Gemini: the family proxy (default) or the user's own key. */
+export type Conn = { kind: 'proxy'; code: string } | { kind: 'key'; key: string };
+
+export function connFrom(s: Pick<Settings, 'apiKey' | 'familyCode'>): Conn | null {
+  if (s.apiKey) return { kind: 'key', key: s.apiKey };
+  if (s.familyCode) return { kind: 'proxy', code: s.familyCode };
+  return null;
+}
+
+export type GeminiErrorKind =
+  | 'invalid-key' // the user's own key was rejected
+  | 'bad-code' // wrong family code
+  | 'rate-limit'
+  | 'proxy-config' // proxy is missing secrets or holds a bad key
+  | 'network'
+  | 'http';
 
 export class GeminiError extends Error {
-  readonly kind: 'invalid-key' | 'network' | 'http';
+  readonly kind: GeminiErrorKind;
   readonly status?: number;
 
-  constructor(message: string, kind: GeminiError['kind'], status?: number) {
+  constructor(message: string, kind: GeminiErrorKind, status?: number) {
     super(message);
     this.kind = kind;
     this.status = status;
@@ -19,23 +37,37 @@ export interface ModelInfo {
   methods: string[];
 }
 
-async function request<T>(apiKey: string, path: string): Promise<T> {
+export async function request<T>(conn: Conn, path: string, init: RequestInit = {}): Promise<T> {
+  const base = conn.kind === 'proxy' ? PROXY_URL : GOOGLE;
+  const headers = new Headers(init.headers);
+  if (conn.kind === 'proxy') headers.set('X-Family-Code', conn.code);
+  else headers.set('x-goog-api-key', conn.key);
+  if (init.body) headers.set('Content-Type', 'application/json');
+
   let res: Response;
   try {
-    res = await fetch(`${BASE}/${path}`, { headers: { 'x-goog-api-key': apiKey } });
+    res = await fetch(`${base}/v1beta/${path}`, { ...init, headers });
   } catch {
     throw new GeminiError('network error', 'network');
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const msg: string = body?.error?.message ?? res.statusText;
-    const invalid = res.status === 400 || res.status === 401 || res.status === 403;
-    throw new GeminiError(msg, invalid && /key/i.test(msg) ? 'invalid-key' : 'http', res.status);
+    throw new GeminiError(msg, errorKind(conn, res.status, body?.error?.code, msg), res.status);
   }
   return res.json();
 }
 
-export async function listModels(apiKey: string): Promise<ModelInfo[]> {
+function errorKind(conn: Conn, status: number, code: unknown, msg: string): GeminiErrorKind {
+  if (status === 429) return 'rate-limit';
+  if (code === 'FAMILY_CODE') return 'bad-code';
+  if (code === 'CONFIG' || code === 'ORIGIN') return 'proxy-config';
+  const keyRejected = (status === 400 || status === 401 || status === 403) && /key/i.test(msg);
+  if (keyRejected) return conn.kind === 'proxy' ? 'proxy-config' : 'invalid-key';
+  return 'http';
+}
+
+export async function listModels(conn: Conn): Promise<ModelInfo[]> {
   const out: ModelInfo[] = [];
   let pageToken = '';
   do {
@@ -43,7 +75,7 @@ export async function listModels(apiKey: string): Promise<ModelInfo[]> {
     const page = await request<{
       models?: { name: string; displayName?: string; supportedGenerationMethods?: string[] }[];
       nextPageToken?: string;
-    }>(apiKey, q);
+    }>(conn, q);
     for (const m of page.models ?? []) {
       out.push({
         id: m.name.replace(/^models\//, ''),

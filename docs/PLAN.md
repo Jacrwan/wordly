@@ -15,6 +15,7 @@ This plan covers eight steps, built in order. Each step ends with a **phone chec
 | SRS | `ts-fsrs` | Required by the spec |
 | Repo | `github.com/Jacrwan/wordly` (public) → `https://jacrwan.github.io/wordly/` | Pages on a free plan needs a public repo. Confirm before creating it. |
 | Deploy | GitHub Actions → Pages (`actions/deploy-pages`) | Pushing to `main` deploys |
+| Gemini access | Cloudflare Worker proxy (`/worker`) with the key as a secret, unlocked by a family code. An optional personal key under Settings → Advanced is used directly. | Changed after step 1 so users don't paste keys. The key can't live in the static site. |
 | AI model names | Resolved from `GET /v1beta/models` at build time **and** at runtime | Aliases change. Settings shows the models that were found. |
 
 ### Gemini model selection
@@ -56,7 +57,7 @@ This plan covers eight steps, built in order. Each step ends with a **phone chec
 - Vite + Preact + TS scaffold, the hash router and a bottom tab bar (검색 / 내 단어 / 복습 / 더보기).
 - i18n: `ko.ts` and `en.ts` string tables with a toggle in Settings. Korean is the default.
 - Dexie schema for every store above (empty stores are fine for now).
-- Settings: API key field (masked) with a **Test** button that lists models, a profile form, a language toggle, and **Backup export/import** (JSON).
+- Settings: family code (or an optional personal API key) with a check that lists models, a profile form, a language toggle, and **Backup export/import** (JSON).
 - PWA: `manifest.webmanifest` (`display: standalone`, `start_url: ./`, `scope: ./`), 192/512/maskable icons, `apple-touch-icon` (180×180), `apple-mobile-web-app-capable`, status-bar meta, safe-area CSS (`env(safe-area-inset-*)`).
 - Call `navigator.storage.persist()` on first launch.
 - `.github/workflows/deploy.yml` → Pages, with `base: '/wordly/'`.

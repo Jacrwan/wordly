@@ -23,7 +23,8 @@ export interface Profile {
 export interface Settings {
   id: 'app';
   uiLang: UiLang;
-  apiKey: string;
+  familyCode: string; // unlocks the shared Gemini proxy
+  apiKey: string; // optional personal key; used instead of the proxy when set
   models: ModelChoice | null;
   profile: Profile;
   dailyNewCards: number;
@@ -135,6 +136,7 @@ export const db = new WordlyDB();
 export const defaultSettings: Settings = {
   id: 'app',
   uiLang: 'ko',
+  familyCode: '',
   apiKey: '',
   models: null,
   profile: { ageRange: '', occupation: '', level: 'intermediate', goals: [] },

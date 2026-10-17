@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
-import { GeminiError, listModels, pickModels } from '../ai/gemini';
+import { connFrom, GeminiError, listModels, pickModels } from '../ai/gemini';
 import { Page } from '../components/Layout';
 import { createBackup, deliverFile, parseBackup, restoreBackup } from '../db/backup';
-import type { Level, Profile, UiLang } from '../db/schema';
+import type { Level, Profile, Settings, UiLang } from '../db/schema';
 import type { StringKey } from '../i18n';
 import { useApp } from '../state';
 
@@ -18,7 +18,7 @@ export function SettingsScreen() {
   return (
     <Page title={t('settings.title')} back="more">
       <LanguageSection />
-      <ApiKeySection />
+      <AiSection />
       <ProfileSection />
       <StudySection />
       <StorageSection />
@@ -48,30 +48,43 @@ function LanguageSection() {
   );
 }
 
-function ApiKeySection() {
+function AiSection() {
   const { t, settings, update } = useApp();
+  const [code, setCode] = useState(settings.familyCode);
   const [key, setKey] = useState(settings.apiKey);
-  const [show, setShow] = useState(false);
+  const [showCode, setShowCode] = useState(false);
+  const [showKey, setShowKey] = useState(false);
   const [status, setStatus] = useState<Status>(null);
   const [showAll, setShowAll] = useState(false);
 
-  async function test() {
-    const k = key.trim();
-    if (!k) return setStatus({ kind: 'error', text: t('settings.apiKey.missing') });
-    setStatus({ kind: 'busy', text: t('settings.apiKey.testing') });
+  // Saves the code or key only after Gemini answers, so a typo never replaces a working value.
+  async function check(patch: Pick<Settings, 'familyCode' | 'apiKey'>, missing: StringKey) {
+    const conn = connFrom(patch);
+    if (!conn) return setStatus({ kind: 'error', text: t(missing) });
+    setStatus({ kind: 'busy', text: t('settings.ai.checking') });
     try {
-      const models = pickModels(await listModels(k));
-      await update({ apiKey: k, models });
-      setStatus({ kind: 'ok', text: t('settings.apiKey.ok', { n: models.available.length }) });
+      const models = pickModels(await listModels(conn));
+      await update({ ...patch, models });
+      setStatus({ kind: 'ok', text: t('settings.ai.ok', { n: models.available.length }) });
     } catch (e) {
-      const err = e as GeminiError;
-      const text = err.kind === 'invalid-key' ? t('settings.apiKey.invalid')
-        : err.kind === 'network' ? t('settings.apiKey.network')
-        : t('settings.apiKey.error', { msg: err.message });
+      const kind = (e as GeminiError).kind;
+      const text = kind === 'bad-code' ? t('settings.family.wrong')
+        : kind === 'invalid-key' ? t('settings.apiKey.invalid')
+        : kind === 'rate-limit' ? t('settings.ai.rateLimit')
+        : kind === 'proxy-config' ? t('settings.ai.proxyConfig')
+        : kind === 'network' ? t('settings.ai.network')
+        : t('settings.ai.error', { msg: (e as Error).message });
       setStatus({ kind: 'error', text });
     }
   }
 
+  async function removeKey() {
+    setKey('');
+    await update({ apiKey: '' });
+    setStatus(null);
+  }
+
+  const busy = status?.kind === 'busy';
   const m = settings.models;
   const rows: { label: StringKey; value: string | null | undefined }[] = [
     { label: 'settings.models.lookup', value: m?.lookup },
@@ -81,23 +94,28 @@ function ApiKeySection() {
 
   return (
     <section class="card">
-      <h2>{t('settings.apiKey')}</h2>
-      <p class="muted small">{t('settings.apiKey.help')}{' '}
-        <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">{t('settings.apiKey.link')}</a>
-      </p>
-      <div class="row">
-        {/* A text field with masking avoids iOS offering to save it as a password. */}
-        <input class={`input mono ${show ? '' : 'masked'}`} type="text" value={key} placeholder="AIza…"
-          autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck={false}
-          onInput={(e) => setKey(e.currentTarget.value)} />
-        <button class="btn ghost" onClick={() => setShow(!show)}>
-          {show ? t('settings.apiKey.hide') : t('settings.apiKey.show')}
+      <h2>{t('settings.ai')}</h2>
+
+      <div class="field">
+        <span>{t('settings.family')}</span>
+        <p class="muted small flush">{t('settings.family.help')}</p>
+        <div class="row">
+          {/* Masked text fields avoid iOS offering to save these as passwords. */}
+          <input class={`input mono ${showCode ? '' : 'masked'}`} type="text" value={code}
+            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck={false}
+            onInput={(e) => setCode(e.currentTarget.value)} />
+          <button class="btn ghost" onClick={() => setShowCode(!showCode)}>
+            {showCode ? t('settings.secret.hide') : t('settings.secret.show')}
+          </button>
+        </div>
+        <button class="btn primary block" disabled={busy}
+          onClick={() => check({ familyCode: code.trim(), apiKey: '' }, 'settings.family.missing')}>
+          {busy ? t('settings.ai.checking') : t('settings.family.check')}
         </button>
       </div>
-      <button class="btn primary block" onClick={test} disabled={status?.kind === 'busy'}>
-        {status?.kind === 'busy' ? t('settings.apiKey.testing') : t('settings.apiKey.test')}
-      </button>
-      {status && status.kind !== 'busy' && <p class={`status ${status.kind}`} role="status">{status.text}</p>}
+
+      {settings.apiKey && <p class="muted small">{t('settings.ai.usingKey')}</p>}
+      {status && !busy && <p class={`status ${status.kind}`} role="status">{status.text}</p>}
 
       {m && (
         <>
@@ -116,7 +134,29 @@ function ApiKeySection() {
           {showAll && <ul class="models mono small">{m.available.map((id) => <li key={id}>{id}</li>)}</ul>}
         </>
       )}
-      <p class="muted small">{t('settings.apiKey.privacy')}</p>
+
+      <details class="advanced" open={!!settings.apiKey}>
+        <summary>{t('settings.apiKey.advanced')}</summary>
+        <p class="muted small">{t('settings.apiKey.help')}{' '}
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">{t('settings.apiKey.link')}</a>
+        </p>
+        <div class="row">
+          <input class={`input mono ${showKey ? '' : 'masked'}`} type="text" value={key} placeholder="AIza…"
+            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck={false}
+            onInput={(e) => setKey(e.currentTarget.value)} />
+          <button class="btn ghost" onClick={() => setShowKey(!showKey)}>
+            {showKey ? t('settings.secret.hide') : t('settings.secret.show')}
+          </button>
+        </div>
+        <div class="row gap-top">
+          <button class="btn" disabled={busy}
+            onClick={() => check({ familyCode: settings.familyCode, apiKey: key.trim() }, 'settings.apiKey.missing')}>
+            {t('settings.apiKey.test')}
+          </button>
+          {settings.apiKey && <button class="btn ghost" onClick={removeKey}>{t('settings.apiKey.remove')}</button>}
+        </div>
+        <p class="muted small">{t('settings.apiKey.privacy')}</p>
+      </details>
     </section>
   );
 }
