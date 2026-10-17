@@ -179,7 +179,13 @@ function ChatSession({ scenario }: { scenario: Scenario }) {
           <button class="btn primary send" disabled={busy || !input.trim()} onClick={send} aria-label={t('chat.send')}>↑</button>
         </div>
       )}
-      {dictation.error && <p class="muted tiny">{t('chat.micError', { e: dictation.error })}</p>}
+      {dictation.error && (
+        <p class="muted small">
+          {dictation.error === 'no-speech' ? t('chat.micNoSpeech')
+            : dictation.error === 'not-allowed' ? t('chat.micDenied')
+            : t('chat.micError', { e: dictation.error })}
+        </p>
+      )}
       {!ended && turns.length > 1 && <button class="btn ghost block gap-top" onClick={() => setEnded(true)}>{t('chat.end')}</button>}
     </Page>
   );
