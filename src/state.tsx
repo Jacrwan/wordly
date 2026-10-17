@@ -2,6 +2,7 @@ import { createContext, type ComponentChildren } from 'preact';
 import { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'preact/hooks';
 import { loadSettings, saveSettings, type Settings } from './db/schema';
 import { makeT, type Translate } from './i18n';
+import { setPreferredVoices } from './speech/engine';
 
 interface AppState {
   settings: Settings;
@@ -40,6 +41,10 @@ export function AppStateProvider({ children }: { children: ComponentChildren }) 
   useEffect(() => {
     if (settings) document.documentElement.lang = settings.uiLang;
   }, [settings?.uiLang]);
+
+  useEffect(() => {
+    if (settings) setPreferredVoices({ 'en-US': settings.speech.enVoice, 'ko-KR': settings.speech.koVoice });
+  }, [settings?.speech.enVoice, settings?.speech.koVoice]);
 
   if (!value) return null;
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

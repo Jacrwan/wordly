@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'preact/hooks';
 import { Page } from '../components/Layout';
+import { href } from '../router';
 import { useApp } from '../state';
 
 const sources = [
@@ -33,6 +34,7 @@ export function About() {
       </ul>
       <p class="muted small">{t('about.ai')}</p>
       <p class="muted small">{t('about.version')} {__APP_VERSION__}</p>
+      <p><a href={href('audiotest')}>{t('audiotest.link')}</a></p>
       <ScreenInfo />
     </Page>
   );

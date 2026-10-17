@@ -1,31 +1,21 @@
-// Pronunciation: the Wikimedia recording when there is one, otherwise the device's voice.
+import { utterance, type Lang } from './engine';
+
+// One-off speech: a word's pronunciation or a single sentence.
 
 let audio: HTMLAudioElement | null = null;
 
-export function speak(text: string, lang: 'en-US' | 'ko-KR', rate = 1): Promise<void> {
+export function speak(text: string, lang: Lang, rate = 1): Promise<void> {
   return new Promise((resolve) => {
     const synth = window.speechSynthesis;
     if (!synth) return resolve();
     synth.cancel();
-    const u = new SpeechSynthesisUtterance(text);
-    u.lang = lang;
-    u.rate = rate;
-    const voice = pickVoice(lang);
-    if (voice) u.voice = voice;
+    const u = utterance(text, lang, rate);
     u.onend = u.onerror = () => resolve();
     synth.speak(u);
   });
 }
 
-function pickVoice(lang: string): SpeechSynthesisVoice | undefined {
-  const voices = window.speechSynthesis.getVoices().filter((v) => v.lang.replace('_', '-').startsWith(lang.slice(0, 2)));
-  return (
-    voices.find((v) => v.lang.replace('_', '-') === lang && v.localService) ??
-    voices.find((v) => v.lang.replace('_', '-') === lang) ??
-    voices[0]
-  );
-}
-
+/** The Wikimedia recording when there is one, otherwise the device's English voice. */
 export async function pronounce(word: string, url?: string): Promise<void> {
   if (url) {
     try {

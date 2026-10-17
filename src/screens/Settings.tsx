@@ -3,6 +3,8 @@ import { connFrom, GeminiError, listModels, pickModels } from '../ai/gemini';
 import { Page } from '../components/Layout';
 import { createBackup, deliverFile, parseBackup, restoreBackup } from '../db/backup';
 import { downloadAll, offlineStatus, type OfflineStatus } from '../dict/store';
+import { voicesFor, type Lang } from '../speech/engine';
+import { speak } from '../speech/speak';
 import type { Level, Profile, Settings, UiLang } from '../db/schema';
 import type { StringKey } from '../i18n';
 import { useApp } from '../state';
@@ -22,6 +24,7 @@ export function SettingsScreen() {
       <AiSection />
       <ProfileSection />
       <StudySection />
+      <VoiceSection />
       <OfflineSection />
       <StorageSection />
       <BackupSection />
@@ -215,6 +218,52 @@ function ProfileSection() {
           ))}
         </div>
       </div>
+    </section>
+  );
+}
+
+function VoiceSection() {
+  const { t, settings, update } = useApp();
+  const [, setTick] = useState(0);
+  // iOS fills the voice list asynchronously.
+  useEffect(() => {
+    const synth = window.speechSynthesis;
+    if (!synth) return;
+    const on = () => setTick((n) => n + 1);
+    synth.addEventListener?.('voiceschanged', on);
+    const id = setTimeout(on, 500);
+    return () => {
+      synth.removeEventListener?.('voiceschanged', on);
+      clearTimeout(id);
+    };
+  }, []);
+  const rows: { lang: Lang; label: StringKey; key: 'enVoice' | 'koVoice'; sample: string }[] = [
+    { lang: 'en-US', label: 'settings.voice.en', key: 'enVoice', sample: 'I have a doctor\'s appointment on Tuesday.' },
+    { lang: 'ko-KR', label: 'settings.voice.ko', key: 'koVoice', sample: '화요일에 병원 예약이 있어요.' },
+  ];
+  const rate = settings.speech.rate;
+  return (
+    <section class="card">
+      <h2>{t('settings.voice')}</h2>
+      <p class="muted small">{t('settings.voice.help')}</p>
+      {rows.map((r) => (
+        <div class="field" key={r.lang}>
+          <span>{t(r.label)}</span>
+          <div class="row">
+            <select class="input" value={settings.speech[r.key] ?? ''}
+              onChange={(e) => { const v = e.currentTarget.value || null; update((s) => ({ speech: { ...s.speech, [r.key]: v } })); }}>
+              <option value="">{t('settings.voice.auto')}</option>
+              {voicesFor(r.lang).map((v) => <option key={v.name} value={v.name}>{v.name} ({v.lang})</option>)}
+            </select>
+            <button class="btn ghost" onClick={() => speak(r.sample, r.lang, rate)}>{t('settings.voice.test')}</button>
+          </div>
+        </div>
+      ))}
+      <label class="field">
+        <span>{t('settings.voice.rate')} <strong>{rate.toFixed(1)}×</strong></span>
+        <input type="range" min="0.5" max="1.5" step="0.1" value={rate}
+          onInput={(e) => { const r = Number(e.currentTarget.value); update((s) => ({ speech: { ...s.speech, rate: r } })); }} />
+      </label>
     </section>
   );
 }

@@ -11,6 +11,10 @@ export default defineConfig({
   define: {
     __APP_VERSION__: JSON.stringify(`${pkg.version} (${new Date().toISOString().slice(0, 10)})`),
   },
+  server: {
+    // Build inputs (several GB of dictionary sources) and tooling aren't part of the app.
+    watch: { ignored: ['**/data-raw/**', '**/.venv/**', '**/worker/**', '**/scripts/**', '**/public/data/**'] },
+  },
   plugins: [
     preact(),
     VitePWA({

@@ -16,10 +16,24 @@ const FIRST_MEANINGS = 5;
 
 export function WordScreen({ query }: { query: string }) {
   const { t } = useApp();
+  const [title, setTitle] = useState<string | null>(null);
+  return (
+    <Page title={title ?? t('word.title')} onBack={() => back('search')}>
+      <WordPanel query={query} source="search" onTitle={setTitle} />
+    </Page>
+  );
+}
+
+/** A word's card with loading / not-found states; used by the word page and the reader's sheet. */
+export function WordPanel({ query, source, onTitle }: { query: string; source: string; onTitle?: (t: string) => void }) {
+  const { t } = useApp();
   const { state, ai, aiError, retry } = useWord(query);
+  useEffect(() => {
+    if (state.status === 'ready') onTitle?.(state.view.word);
+  }, [state]);
 
   return (
-    <Page title={state.status === 'ready' ? state.view.word : t('word.title')} onBack={() => back('search')}>
+    <>
       {state.status === 'loading' && <p class="muted center">{t('word.loading')}</p>}
       {state.status === 'aiSearching' && <p class="muted center pulse">{t('word.aiSearching')}</p>}
       {state.status === 'offline' && <p class="muted center">{t('word.offline')}</p>}
@@ -41,8 +55,10 @@ export function WordScreen({ query }: { query: string }) {
           )}
         </div>
       )}
-      {state.status === 'ready' && <WordCard view={state.view} via={state.via} ai={ai} aiError={aiError} retry={retry} />}
-    </Page>
+      {state.status === 'ready' && (
+        <WordCard view={state.view} via={state.via} ai={ai} aiError={aiError} retry={retry} source={source} />
+      )}
+    </>
   );
 }
 
@@ -51,12 +67,13 @@ function AiTag() {
   return <span class="ai-tag" title={t('word.aiTagTitle')} aria-label={t('word.aiTagTitle')}>{t('word.aiTag')}</span>;
 }
 
-export function WordCard({ view, via, ai, aiError, retry }: {
+export function WordCard({ view, via, ai, aiError, retry, source = 'search' }: {
   view: WordView;
   via?: string;
   ai: AiState;
   aiError?: string;
   retry: () => void;
+  source?: string;
 }) {
   const { t, settings } = useApp();
   const lang = settings.uiLang;
@@ -164,7 +181,7 @@ export function WordCard({ view, via, ai, aiError, retry }: {
 
       {saved && <EasyNote view={view} />}
 
-      <SaveBar view={view} saved={saved} />
+      <SaveBar view={view} saved={saved} source={source} />
     </article>
   );
 }
@@ -206,12 +223,12 @@ function EasyNote({ view }: { view: WordView }) {
   );
 }
 
-function SaveBar({ view, saved }: { view: WordView; saved: { status: string } | undefined }) {
+function SaveBar({ view, saved, source }: { view: WordView; saved: { status: string } | undefined; source: string }) {
   const { t } = useApp();
   if (!saved) {
     return (
       <div class="save-bar">
-        <button class="btn primary block" onClick={() => saveWord(view, 'search')}>{t('word.save')}</button>
+        <button class="btn primary block" onClick={() => saveWord(view, source)}>{t('word.save')}</button>
       </div>
     );
   }

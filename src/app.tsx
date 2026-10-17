@@ -2,6 +2,9 @@ import { useEffect, useRef } from 'preact/hooks';
 import { Banners, TabBar } from './components/Layout';
 import { useRoute } from './router';
 import { About } from './screens/About';
+import { AudioTest } from './screens/AudioTest';
+import { Player } from './screens/Player';
+import { Reader } from './screens/Reader';
 import { More } from './screens/More';
 import { Placeholder } from './screens/Placeholder';
 import { Review } from './screens/Review';
@@ -24,8 +27,9 @@ export function App() {
         {route === 'more' && <More />}
         {route === 'settings' && <SettingsScreen />}
         {route === 'about' && <About />}
-        {route === 'player' && <Placeholder title="more.player" step={5} />}
-        {route === 'reader' && <Placeholder title="more.reader" step={5} />}
+        {route === 'player' && <Player />}
+        {route === 'reader' && <Reader />}
+        {route === 'audiotest' && <AudioTest />}
         {route === 'packs' && <Placeholder title="more.packs" step={6} />}
         {route === 'chat' && <Placeholder title="more.chat" step={7} />}
         {route === 'podcast' && <Placeholder title="more.podcast" step={8} />}
