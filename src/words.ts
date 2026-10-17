@@ -32,6 +32,15 @@ export async function saveWord(view: WordView, source: string): Promise<'added' 
   });
 }
 
+/** Keeps a saved word's list snapshot in step with the dictionary (e.g. after meanings were reordered). */
+export async function refreshSnapshot(view: WordView): Promise<void> {
+  const saved = await db.myWords.get(view.key);
+  const ko = viewKo(view);
+  if (saved && ko.length && ko.join('|') !== saved.ko.join('|')) {
+    await db.myWords.update(view.key, { ko, display: view.word, rank: view.rank });
+  }
+}
+
 export async function setStatus(key: string, status: WordStatus): Promise<void> {
   await db.myWords.update(key, { status });
 }

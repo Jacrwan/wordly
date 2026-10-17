@@ -345,3 +345,27 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .tiny { font-size: 0.75rem; }
 .block { display: block; }
 .example-m { display: inline-block; margin-left: 6px; font-size: 0.75rem; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }
+
+/* ---- review */
+.stat-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 8px; }
+.stat { display: grid; justify-items: center; padding: 12px; background: var(--bg); border-radius: 12px; }
+.stat strong { font-size: 2rem; line-height: 1.1; }
+.stat span { font-size: 0.85rem; color: var(--muted); }
+.review-meta { display: flex; justify-content: space-between; gap: 8px; margin: 0 4px 8px; }
+.review-card { min-height: 260px; display: flex; flex-direction: column; justify-content: center; gap: 8px; text-align: center; }
+.review-word { font-size: 2.4rem; margin: 0; }
+.review-ko { font-size: 1.6rem; font-weight: 700; margin: 0; }
+.center-btn { align-self: center; }
+.answer { border-top: 1px dashed var(--border); margin-top: 12px; padding-top: 12px; display: grid; gap: 8px; }
+.review-example { font-size: 0.95rem; text-align: left; background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+.big-btn { min-height: 64px; font-size: 1.15rem; }
+.grades { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.grade { display: grid; gap: 2px; justify-items: center; min-height: 72px; border: 0; border-radius: 12px; font: inherit; font-weight: 700; cursor: pointer; color: #fff; }
+.grade:disabled { opacity: 0.6; }
+.grade-ivl { font-size: 0.8rem; font-weight: 500; opacity: 0.9; }
+.grade.again { background: #dc2626; }
+.grade.hard { background: #d97706; }
+.grade.good { background: #16a34a; }
+.grade.easy { background: #2563eb; }
+.tab-icon { position: relative; display: inline-flex; }
+.tab-badge { position: absolute; top: -6px; left: 16px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: #dc2626; color: #fff; font-size: 0.7rem; font-weight: 800; display: grid; place-items: center; }

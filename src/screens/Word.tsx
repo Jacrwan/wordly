@@ -10,7 +10,7 @@ import { posLabel } from '../i18n/pos';
 import { back, go, href } from '../router';
 import { pronounce, speak } from '../speech/speak';
 import { useApp } from '../state';
-import { removeWord, saveWord, setStatus } from '../words';
+import { refreshSnapshot, removeWord, saveWord, setStatus } from '../words';
 
 const FIRST_MEANINGS = 5;
 
@@ -62,6 +62,9 @@ export function WordCard({ view, via, ai, aiError, retry }: {
   const lang = settings.uiLang;
   const [allMeanings, setAllMeanings] = useState(false);
   const saved = useLive(() => db.myWords.get(view.key), [view.key]);
+  useEffect(() => {
+    refreshSnapshot(view);
+  }, [view]);
   const meanings = allMeanings ? view.meanings : view.meanings.slice(0, FIRST_MEANINGS);
   const posList = [...new Set(view.meanings.map((m) => m.p).filter(Boolean))];
 

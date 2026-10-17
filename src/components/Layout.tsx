@@ -1,6 +1,8 @@
 import type { ComponentChildren } from 'preact';
 import { useEffect, useState } from 'preact/hooks';
+import { useLive } from '../hooks/useLive';
 import { dismissPwa, onPwaChange, pwaState, updateSW } from '../pwa';
+import { queueStats } from '../srs';
 import { href, type Route } from '../router';
 import { useApp } from '../state';
 import { Icon, type IconName } from './Icon';
@@ -20,14 +22,19 @@ const tabFor = (r: Route): Route => {
 };
 
 export function TabBar({ route }: { route: Route }) {
-  const { t } = useApp();
+  const { t, settings } = useApp();
   const active = tabFor(route);
+  const stats = useLive(() => queueStats(settings.dailyNewCards), [settings.dailyNewCards, route]);
+  const waiting = stats ? stats.due + stats.fresh : 0;
   return (
     <nav class="tabbar">
       {tabs.map((tab) => (
         <a key={tab.route} href={href(tab.route)} class={tab.route === active ? 'active' : ''}
           aria-current={tab.route === active ? 'page' : undefined}>
-          <Icon name={tab.icon} />
+          <span class="tab-icon">
+            <Icon name={tab.icon} />
+            {tab.route === 'review' && waiting > 0 && <span class="tab-badge">{waiting > 99 ? '99+' : waiting}</span>}
+          </span>
           <span>{t(tab.label)}</span>
         </a>
       ))}

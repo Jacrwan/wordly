@@ -75,6 +75,7 @@ export interface ReviewLogRow {
   rating: number;
   source: 'review' | 'conversation';
   ts: number;
+  wasNew?: boolean; // first time this card was seen (counts toward the daily new-word limit)
 }
 
 export interface Pack {
