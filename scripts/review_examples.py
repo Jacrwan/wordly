@@ -63,6 +63,7 @@ For each word return:
    - the word is used in one of your meanings,
    - a natural, everyday sentence that makes sense on its own without the movie's context (reject fragments, stutters, typos, odd grammar),
    - suitable for a family learning app (no violence, crime, sexual content, insults, religion or politics).
+   Be strict. Reject a candidate if the Korean is ungrammatical, looks machine-translated (e.g. dictionary-form verbs like "보도되다." or word-for-word phrasing), adds or drops meaning, or if the English is unclear without context (e.g. "I need to know the who and the where."). When in doubt, reject it and write your own example instead.
    Prefer examples that show different meanings, and simpler sentences. Give the meaning each example shows (copy one of your meanings). Never edit candidate text.
 3. new_examples: ONLY if fewer than 2 candidates qualify, write new short everyday examples (max 12 words) so the total is 2–3. The Korean must be what a native speaker would naturally say, in polite spoken style (해요체), translating the meaning rather than word for word (e.g. "I feel much better today." → "오늘은 훨씬 나아요."). Otherwise return an empty list.
 Return one result per input word, with the same id."""
@@ -170,7 +171,7 @@ class Client:
             'generationConfig': {
                 'responseMimeType': 'application/json',
                 'responseSchema': SCHEMA,
-                'temperature': 0.2,
+                'temperature': 0.1,
             },
         }
         try:
