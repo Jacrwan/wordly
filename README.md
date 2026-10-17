@@ -87,7 +87,7 @@ npx wrangler secret put FAMILY_CODE
 npx wrangler deploy
 ```
 
-Put the deployed `https://wordly-proxy.<subdomain>.workers.dev` URL in `src/ai/config.ts`. To run the Worker locally, copy `worker/.dev.vars.example` to `worker/.dev.vars`, then run `npm run dev` in `/worker`, and set `VITE_PROXY_URL=http://localhost:8787` in `.env.development.local`.
+The Worker is deployed at `https://wordly-proxy.jacrwan.workers.dev`; `src/ai/config.ts` points to it. To run the Worker locally, copy `worker/.dev.vars.example` to `worker/.dev.vars`, then run `npm run dev` in `/worker`, and set `VITE_PROXY_URL=http://localhost:8787` in `.env.development.local`.
 
 In the app: **설정 → AI 연결 → 가족 코드**, entered once per phone. Under **고급**, a user can paste their own AI Studio key instead. That key stays on the device and takes priority over the proxy.
 

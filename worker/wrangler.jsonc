@@ -3,6 +3,8 @@
   "name": "wordly-proxy",
   "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
+  "workers_dev": true, // https://wordly-proxy.jacrwan.workers.dev
+  "preview_urls": false, // no extra per-version URLs
   "observability": { "enabled": true },
   "vars": {
     // Browser origins allowed to call the proxy (comma-separated).
