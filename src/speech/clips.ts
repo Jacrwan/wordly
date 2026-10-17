@@ -99,13 +99,21 @@ function batches(items: ClipItem[]): ClipItem[][] {
   return out;
 }
 
+// The podcast's two-speaker request shape (known to work with the Flash TTS models), with every
+// word read by the same host; each word is its own part, so the voice pauses between them.
+const SPEAKER = 'Mina';
+const SPEAKERS = [{ speaker: SPEAKER, voice: VOICE }, { speaker: 'Jake', voice: 'Puck' }];
+
 function ttsBody(texts: string[]): object {
   return {
-    // A blank line between words gives the voice a clear pause to cut at.
-    contents: [{ role: 'user', parts: [{ text: texts.join('\n\n') }] }],
+    contents: [{ role: 'user', parts: texts.map((text) => ({ text, speechMetadata: { speaker: SPEAKER } })) }],
     generationConfig: {
       responseModalities: ['AUDIO'],
-      speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: VOICE } } },
+      speechConfig: {
+        multiSpeakerVoiceConfig: {
+          speakerVoiceConfigs: SPEAKERS.map((s) => ({ speaker: s.speaker, voiceConfig: { prebuiltVoiceConfig: { voiceName: s.voice } } })),
+        },
+      },
     },
   };
 }
