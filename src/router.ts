@@ -2,9 +2,9 @@ import { useEffect, useState } from 'preact/hooks';
 
 export type Route =
   | 'search' | 'words' | 'review' | 'more' | 'word'
-  | 'settings' | 'about' | 'player' | 'reader' | 'packs' | 'chat' | 'podcast' | 'audiotest';
+  | 'settings' | 'about' | 'player' | 'reader' | 'packs' | 'pack' | 'chat' | 'podcast' | 'audiotest';
 
-const routes: Route[] = ['search', 'words', 'review', 'more', 'word', 'settings', 'about', 'player', 'reader', 'packs', 'chat', 'podcast', 'audiotest'];
+const routes: Route[] = ['search', 'words', 'review', 'more', 'word', 'settings', 'about', 'player', 'reader', 'packs', 'pack', 'chat', 'podcast', 'audiotest'];
 
 export interface Location {
   name: Route;

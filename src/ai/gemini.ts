@@ -56,14 +56,16 @@ export async function request<T>(conn: Conn, path: string, init: RequestInit = {
     const body = await res.json().catch(() => null);
     const msg: string = body?.error?.message ?? res.statusText;
     const retry = (body?.error?.details ?? []).find((d: { retryDelay?: string }) => d.retryDelay)?.retryDelay;
-    const retryAfterMs = retry ? Math.ceil(parseFloat(retry) * 1000) : undefined;
+    // Overloaded models (503 "high demand") get a short default wait.
+    const retryAfterMs = retry ? Math.ceil(parseFloat(retry) * 1000) : res.status >= 500 ? 5000 : undefined;
     throw new GeminiError(msg, errorKind(conn, res.status, body?.error?.code, msg), res.status, retryAfterMs);
   }
   return res.json();
 }
 
 function errorKind(conn: Conn, status: number, code: unknown, msg: string): GeminiErrorKind {
-  if (status === 429) return 'rate-limit';
+  // 429 (quota) and 500/503 (temporarily overloaded) are both "try another model or wait".
+  if (status === 429 || status === 500 || status === 503) return 'rate-limit';
   if (code === 'FAMILY_CODE') return 'bad-code';
   if (code === 'CONFIG' || code === 'ORIGIN') return 'proxy-config';
   const keyRejected = (status === 400 || status === 401 || status === 403) && /key/i.test(msg);

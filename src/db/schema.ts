@@ -81,8 +81,10 @@ export interface ReviewLogRow {
 export interface Pack {
   id: string;
   title: string;
+  description?: string;
   level: Level | null;
   words: string[];
+  notes?: Record<string, string>; // per-word reason (AI packs)
   generatedFrom: string | null; // profile hash for AI packs, null for fixed packs
   createdAt: number;
 }
