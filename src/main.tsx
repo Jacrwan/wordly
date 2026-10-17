@@ -6,6 +6,9 @@ import './styles.css';
 
 requestPersistence();
 
+// iOS can leave the page shifted up after the keyboard closes; put it back.
+document.addEventListener('focusout', () => setTimeout(() => window.scrollTo(0, 0), 50));
+
 render(
   <AppStateProvider>
     <App />

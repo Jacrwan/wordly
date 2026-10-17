@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'preact/hooks';
 import { Page } from '../components/Layout';
 import { useApp } from '../state';
 
@@ -32,6 +33,39 @@ export function About() {
       </ul>
       <p class="muted small">{t('about.ai')}</p>
       <p class="muted small">{t('about.version')} {__APP_VERSION__}</p>
+      <ScreenInfo />
     </Page>
   );
+}
+
+// Viewport numbers for debugging iOS layout reports (tab bar gaps, notch overlap).
+function ScreenInfo() {
+  const [info, setInfo] = useState('');
+  useEffect(() => {
+    const probe = document.createElement('div');
+    probe.style.cssText =
+      'position:fixed;visibility:hidden;padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)';
+    document.body.append(probe);
+    const update = () => {
+      const cs = getComputedStyle(probe);
+      const vv = window.visualViewport;
+      const standalone = matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true;
+      const safari = navigator.userAgent.match(/Version\/([\d.]+)/)?.[1] ?? '?';
+      setInfo(
+        `screen ${screen.width}×${screen.height} · window ${innerWidth}×${innerHeight}\n` +
+          `visual ${vv ? `${Math.round(vv.width)}×${Math.round(vv.height)} @${Math.round(vv.offsetTop)}` : '-'} · ` +
+          `safe ${cs.paddingTop}/${cs.paddingBottom}\n` +
+          `standalone ${standalone} · Safari ${safari}`,
+      );
+    };
+    update();
+    addEventListener('resize', update);
+    visualViewport?.addEventListener('resize', update);
+    return () => {
+      probe.remove();
+      removeEventListener('resize', update);
+      visualViewport?.removeEventListener('resize', update);
+    };
+  }, []);
+  return <p class="muted small mono diag">{info}</p>;
 }

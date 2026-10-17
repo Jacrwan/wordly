@@ -40,6 +40,14 @@ html {
   -webkit-tap-highlight-color: transparent;
 }
 
+/* The document itself never scrolls; .scroller does. Scrolling the document in an
+   iOS home-screen app can leave a blank strip under fixed bars (WebKit bug 292603). */
+html, body {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -54,7 +62,20 @@ h1, h2, h3 { line-height: 1.25; }
 h2 { font-size: 1.1rem; margin: 0 0 0.5rem; }
 h3 { font-size: 1rem; margin: 1rem 0 0.5rem; }
 
-.app { min-height: 100dvh; }
+.app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+}
 
 .topbar {
   position: sticky;
@@ -63,10 +84,9 @@ h3 { font-size: 1rem; margin: 1rem 0 0.5rem; }
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: calc(env(safe-area-inset-top) + 8px) 16px 8px;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  /* Extra room below the status bar: iOS blurs the strip just under it. */
+  padding: calc(env(safe-area-inset-top) + 16px) 16px 8px;
+  background: var(--bg);
 }
 .topbar h1 { font-size: 1.6rem; margin: 4px 0; }
 .topbar .back {
@@ -79,14 +99,13 @@ h3 { font-size: 1rem; margin: 1rem 0 0.5rem; }
 }
 
 .content {
-  padding: 8px max(16px, env(safe-area-inset-left)) calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 24px);
+  padding: 8px max(16px, env(safe-area-inset-left)) 32px;
   max-width: 640px;
   margin: 0 auto;
 }
 
 .tabbar {
-  position: fixed;
-  inset: auto 0 0 0;
+  flex: none;
   z-index: 20;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
@@ -109,7 +128,7 @@ h3 { font-size: 1rem; margin: 1rem 0 0.5rem; }
 .tabbar a.active { color: var(--accent); }
 
 .banners {
-  position: fixed;
+  position: absolute;
   left: 12px;
   right: 12px;
   bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 12px);
@@ -263,3 +282,5 @@ select.input {
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
 .center { text-align: center; }
+
+.diag { white-space: pre-wrap; margin-top: 8px; }
