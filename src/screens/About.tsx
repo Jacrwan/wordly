@@ -5,8 +5,8 @@ import { useApp } from '../state';
 const sources = [
   { name: 'Wiktionary', url: 'https://en.wiktionary.org/', via: 'kaikki.org / wiktextract', license: 'CC BY-SA 4.0',
     licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/', desc: 'about.wiktionary' },
-  { name: 'Tatoeba', url: 'https://tatoeba.org/', license: 'CC BY 2.0 FR',
-    licenseUrl: 'https://creativecommons.org/licenses/by/2.0/fr/', desc: 'about.tatoeba' },
+  { name: 'OpenSubtitles', url: 'https://www.opensubtitles.org/', via: 'OPUS', license: 'Lison & Tiedemann (2016), OpenSubtitles2016',
+    licenseUrl: 'https://opus.nlpl.eu/OpenSubtitles/corpus/version/OpenSubtitles', desc: 'about.opensubtitles' },
   { name: 'wordfreq', url: 'https://github.com/rspeer/wordfreq', license: 'CC BY-SA 4.0',
     licenseUrl: 'https://creativecommons.org/licenses/by-sa/4.0/', desc: 'about.wordfreq' },
   { name: 'Wikimedia Commons', url: 'https://commons.wikimedia.org/', license: 'CC BY-SA (per file)',

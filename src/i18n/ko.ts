@@ -164,10 +164,10 @@ export const ko = {
   'about.intro': 'Wordly는 한국어 사용자를 위한 영어 단어 학습 앱입니다. 모든 데이터는 이 기기에만 저장됩니다.',
   'about.sources': '데이터 출처',
   'about.wiktionary': '뜻, 발음기호, 유의어, 한국어 번역, 발음 녹음 링크',
-  'about.tatoeba': '영어·한국어 예문',
+  'about.opensubtitles': '영어·한국어 예문, 뜻의 사용 빈도 (영화·드라마 자막)',
   'about.wordfreq': '단어 빈도 순위',
   'about.commons': '발음 녹음 (재생할 때 불러옴)',
-  'about.ai': 'AI 표시가 있는 내용은 Google Gemini가 만든 것으로, 틀릴 수 있습니다.',
+  'about.ai': 'AI 표시가 있는 내용은 Google Gemini가 만든 것으로, 틀릴 수 있습니다. 자막 예문은 Gemini가 번역이 맞는지 검토해 골랐습니다.',
   'about.version': '버전',
 };
 

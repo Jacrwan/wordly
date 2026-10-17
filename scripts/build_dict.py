@@ -1,9 +1,11 @@
 """Build Wordly's offline dictionary.
 
-Sources (downloaded into --raw if missing):
-  - English Wiktionary via kaikki.org (wiktextract JSONL)   CC BY-SA 4.0
-  - Tatoeba English-Korean sentence pairs                    CC BY 2.0 FR
+Sources:
+  - English Wiktionary via kaikki.org (wiktextract JSONL)   CC BY-SA 4.0 (downloaded into --raw if missing)
   - wordfreq frequency ranks                                 CC BY-SA 4.0
+  - Optional, from OpenSubtitles (OPUS, opensubtitles.org):
+      --subs    meaning counts from scripts/mine_subtitles.py (orders Korean meanings by real usage)
+      --review  Gemini-reviewed meanings and example pairs from scripts/review_examples.py
 
 Output (--out, normally public/data):
   dict/{shard}.json   English entries sharded by the first two letters ("ap", "a_", "e_")
@@ -11,32 +13,32 @@ Output (--out, normally public/data):
   manifest.json       version, shard list, sizes and coverage stats
 
 Usage:
-  python -I scripts/build_dict.py --raw data-raw --out public/data
-  python -I scripts/build_dict.py --raw data-raw --out public/data --refresh   # re-extract Wiktionary
+  python -I scripts/build_dict.py --raw data-raw --out public/data \
+      --subs data-raw/cache/subs-v1.pickle.gz --review data-raw/cache/review-v1.jsonl
+  ... --refresh   # re-extract Wiktionary instead of using the cache
 """
 
 from __future__ import annotations
 
 import argparse
 import bisect
-import bz2
 import gzip
 import hashlib
 import json
 import pickle
 import re
 import shutil
+import ssl
 import sys
 import time
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
 
+import certifi
 from wordfreq import top_n_list, zipf_frequency
 
 KAIKKI_URL = 'https://kaikki.org/dictionary/English/kaikki.org-dictionary-English.jsonl.gz'
-TATOEBA_URL = 'https://downloads.tatoeba.org/exports/per_language/'
-TATOEBA_FILES = ['eng/eng_sentences.tsv.bz2', 'kor/kor_sentences.tsv.bz2', 'kor/kor-eng_links.tsv.bz2']
 
 CORE_WORDS = 30_000  # most frequent words that are always included
 FREQ_POOL = 100_000  # wordfreq list used for ranks and candidates
@@ -51,8 +53,6 @@ MAX_GLOSS_LEN = 220
 MAX_SYN = 8
 MAX_ANT = 5
 MAX_KO_PER_SENSE = 4
-MAX_PAIRS = 3
-MAX_PAIR_LEN = 100
 MAX_KO_INDEX_HITS = 15
 
 DROP_SENSE_TAGS = {
@@ -62,6 +62,7 @@ DROP_SENSE_TAGS = {
 DROP_WORD_TAGS = {'obsolete', 'archaic', 'rare', 'dialectal'}
 HANGUL = re.compile(r'[가-힣]')
 COMMONS = 'https://upload.wikimedia.org/wikipedia/commons/'
+TOKEN = re.compile(r"[a-z]+(?:['’-][a-z]+)*")
 CACHE_NAME = 'extract-v1.pickle.gz'
 
 
@@ -77,18 +78,16 @@ def download(url: str, dest: Path):
     dest.parent.mkdir(parents=True, exist_ok=True)
     log(f'downloading {url}')
     tmp = dest.with_suffix(dest.suffix + '.part')
-    with urllib.request.urlopen(url) as r, open(tmp, 'wb') as f:
+    ctx = ssl.create_default_context(cafile=certifi.where())  # macOS python.org builds lack CA certs
+    with urllib.request.urlopen(url, context=ctx) as r, open(tmp, 'wb') as f:
         shutil.copyfileobj(r, f, length=1 << 20)
     tmp.rename(dest)
 
 
-def fetch_sources(raw: Path) -> tuple[Path, Path]:
+def fetch_sources(raw: Path) -> Path:
     kaikki = raw / 'kaikki' / 'kaikki-English.jsonl.gz'
     download(KAIKKI_URL, kaikki)
-    tatoeba = raw / 'tatoeba'
-    for f in TATOEBA_FILES:
-        download(TATOEBA_URL + f, tatoeba / Path(f).name)
-    return kaikki, tatoeba
+    return kaikki
 
 
 # ---------------------------------------------------------------- pass 1: extract Wiktionary
@@ -352,53 +351,50 @@ def inherit_korean(built: dict[str, dict]) -> int:
     return n
 
 
-# ---------------------------------------------------------------- Tatoeba
+# ---------------------------------------------------------------- OpenSubtitles meanings + reviewed examples
 
-def load_pairs(tatoeba: Path) -> list[tuple[str, str]]:
-    def sentences(name):
-        out = {}
-        with bz2.open(tatoeba / name, 'rt', encoding='utf-8') as f:
-            for line in f:
-                parts = line.rstrip('\n').split('\t')
-                if len(parts) >= 3:
-                    out[parts[0]] = parts[2].strip()
-        return out
-
-    kor = sentences('kor_sentences.tsv.bz2')
-    eng = sentences('eng_sentences.tsv.bz2')
-    pairs, seen = [], set()
-    with bz2.open(tatoeba / 'kor-eng_links.tsv.bz2', 'rt', encoding='utf-8') as f:
-        for line in f:
-            k, e = line.rstrip('\n').split('\t')[:2]
-            if k in kor and e in eng and len(eng[e]) <= MAX_PAIR_LEN:
-                p = (eng[e], kor[k])
-                if p not in seen:
-                    seen.add(p)
-                    pairs.append(p)
-    return pairs
+def dict_korean(e: dict) -> list[str]:
+    return dedupe([k for b in e.get('pos', []) for s in b['s'] for k in s.get('ko', [])] + e.get('ko', []))
 
 
-TOKEN = re.compile(r"[a-z]+(?:['’-][a-z]+)*")
+def load_review(path: Path | None) -> dict[str, dict]:
+    if not path or not path.exists():
+        return {}
+    out = {}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if line.strip():
+            r = json.loads(line)
+            out[r['key']] = r
+    return out
 
 
-def attach_pairs(entries: dict[str, dict], pairs, form_to_lemma) -> None:
-    phrase_lens = {len(k.split()) for k in entries if ' ' in k}
-    hits: dict[str, list[int]] = defaultdict(list)
-    for idx, (en, _) in enumerate(pairs):
-        toks = TOKEN.findall(en.lower().replace('’', "'"))
-        words = set(toks)
-        for t in toks:
-            words.update(form_to_lemma.get(t, ()))
-        for n in phrase_lens:
-            words.update(' '.join(toks[i:i + n]) for i in range(len(toks) - n + 1))
-        for w in words:
-            if w in entries:
-                hits[w].append(idx)
-    for w, idxs in hits.items():
-        if 'to' in entries[w]:
+def apply_usage(final: dict[str, dict], counts: dict[str, dict], review: dict[str, dict]) -> tuple[int, int]:
+    """Adds `top` (Korean meanings, most used first) and `eg` (reviewed example pairs).
+
+    Reviewed words get Gemini's ordering (which can add a missing common meaning, listed in
+    `topAi`) and its vetted examples; other words are ordered by subtitle counts alone.
+    """
+    reviewed = ordered = 0
+    for k, e in final.items():
+        if 'to' in e:
             continue
-        best = sorted(set(idxs), key=lambda i: (len(pairs[i][0]), i))[:MAX_PAIRS]
-        entries[w]['tt'] = [list(pairs[i]) for i in best]
+        known = dict_korean(e)
+        r = review.get(k)
+        if r:
+            e['top'] = r['meanings']
+            new = [m for m in r['meanings'] if m not in known]
+            if new:
+                e['topAi'] = new
+            if r['examples']:
+                e['eg'] = [{key: x[key] for key in ('e', 'k', 'm', 'a') if x.get(key)} for x in r['examples']]
+            reviewed += 1
+            continue
+        c = counts.get(k, {})
+        used = [m for m in sorted(c, key=lambda m: -c[m]) if c[m] >= 3 and m in known]
+        if used:
+            e['top'] = (used + [m for m in known if m not in used])[:4]
+            ordered += 1
+    return reviewed, ordered
 
 
 # ---------------------------------------------------------------- Korean index
@@ -423,14 +419,17 @@ def ko_shard(key: str) -> str:
 
 
 def build_ko_index(entries: dict[str, dict]) -> dict[str, dict[str, list[str]]]:
-    index: dict[str, dict[str, int]] = defaultdict(dict)
+    index: dict[str, dict[str, tuple[int, int]]] = defaultdict(dict)
     for key, e in entries.items():
         if 'to' in e:
             continue
-        kos = list(e.get('ko', [])) + [k for b in e['pos'] for s in b['s'] for k in s.get('ko', [])]
+        top = e.get('top', [])
+        kos = top + list(e.get('ko', [])) + [k for b in e['pos'] for s in b['s'] for k in s.get('ko', [])]
         for ko in kos:
+            # Words where this is a main meaning come first (지원 -> apply, support), then by frequency.
+            main = 0 if ko in top[:2] else 1
             for k in ko_keys(ko):
-                index[k][key] = min(index[k].get(key, 10**9), e['r'])
+                index[k][key] = min(index[k].get(key, (2, 10**9)), (main, e['r']))
     shards: dict[str, dict[str, list[str]]] = defaultdict(dict)
     for k, words in index.items():
         ranked = sorted(words, key=lambda w: (words[w], w))[:MAX_KO_INDEX_HITS]
@@ -457,9 +456,11 @@ def main():
     ap.add_argument('--raw', type=Path, required=True)
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--refresh', action='store_true', help='re-extract Wiktionary instead of using the cache')
+    ap.add_argument('--subs', type=Path, help='meaning counts from scripts/mine_subtitles.py')
+    ap.add_argument('--review', type=Path, help='reviewed examples from scripts/review_examples.py')
     args = ap.parse_args()
 
-    kaikki, tatoeba = fetch_sources(args.raw)
+    kaikki = fetch_sources(args.raw)
     by_key = extract(kaikki, args.raw / 'cache' / CACHE_NAME, args.refresh)
 
     # Ranks: wordfreq list position; phrases and rarer words are placed by their zipf frequency.
@@ -522,11 +523,7 @@ def main():
                 built[f] = {'w': f, 'to': built[lemma]['w'], 'r': rank_of[f]}
                 selected.add(f)
 
-    pairs = load_pairs(tatoeba)
-    log(f'{len(pairs):,} English-Korean sentence pairs')
-
     extras = [k for k in real if k not in selected and has_korean(built[k])]
-    attach_pairs({k: built[k] for k in list(selected) + extras}, pairs, form_to_lemma)
 
     used = sum(entry_size(built[k]) for k in selected)
     added = 0
@@ -543,6 +540,14 @@ def main():
     # Pointers may target words that didn't make the cut.
     for k in [k for k, e in final.items() if 'to' in e and e['to'].lower() not in final]:
         del final[k]
+
+    counts = {}
+    if args.subs and args.subs.exists():
+        with gzip.open(args.subs, 'rb') as f:
+            counts = pickle.load(f)['counts']
+    review = load_review(args.review)
+    reviewed, ordered = apply_usage(final, counts, review)
+    log(f'{reviewed:,} words with reviewed meanings/examples, {ordered:,} more ordered by subtitle usage')
 
     # ---- write
     out = args.out
@@ -570,7 +575,7 @@ def main():
         'audioBase': COMMONS + 'transcoded/',
         'sources': {
             'wiktionary': 'https://kaikki.org/dictionary/rawdata.html (CC BY-SA 4.0)',
-            'tatoeba': 'https://tatoeba.org (CC BY 2.0 FR)',
+            'opensubtitles': 'https://www.opensubtitles.org via OPUS (Lison & Tiedemann 2016)',
             'wordfreq': 'https://github.com/rspeer/wordfreq (CC BY-SA 4.0)',
         },
         'dict': sorted(s for s in shards),
@@ -580,7 +585,7 @@ def main():
         'stats': stats,
     }
     (out / 'manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding='utf-8')
-    report(manifest, files, len(pairs))
+    report(manifest, files)
 
 
 def coverage(final: dict[str, dict]) -> dict:
@@ -594,19 +599,18 @@ def coverage(final: dict[str, dict]) -> dict:
         n = len(group) or 1
         stats[name] = {
             'words': len(group),
-            'korean': round(100 * sum(has_korean(e) for e in group) / n, 1),
-            'koreanWithBase': round(100 * sum(has_korean(e) or 'ofKo' in e for e in group) / n, 1),
-            'pairs2': round(100 * sum(len(e.get('tt', [])) >= 2 for e in group) / n, 1),
-            'examples2': round(100 * sum(
-                len(e.get('tt', [])) + sum(len(s.get('ex', [])) for b in e['pos'] for s in b['s']) >= 2
-                for e in group) / n, 1),
+            'korean': round(100 * sum(has_korean(e) or bool(e.get('top')) for e in group) / n, 1),
+            'koreanWithBase': round(100 * sum(has_korean(e) or bool(e.get('top')) or 'ofKo' in e for e in group) / n, 1),
+            'ordered': round(100 * sum('top' in e for e in group) / n, 1),
+            'pairs2': round(100 * sum(len(e.get('eg', [])) >= 2 for e in group) / n, 1),
+            'aiExamples': round(100 * sum(any(x.get('a') for x in e.get('eg', [])) for e in group) / n, 1),
             'audio': round(100 * sum('au' in e for e in group) / n, 1),
             'ipa': round(100 * sum('ipa' in e for e in group) / n, 1),
         }
     return stats
 
 
-def report(manifest, files, n_pairs):
+def report(manifest, files):
     mb = lambda b: f'{b / 1e6:.1f} MB'
     s = manifest['stats']
     dict_bytes = sum(r for n, (r, _) in files.items() if n.startswith('dict/'))
@@ -615,15 +619,16 @@ def report(manifest, files, n_pairs):
     print(f"  entries: {s['words']:,} ({s['words'] - s['phraseCount']:,} single words, {s['phraseCount']:,} phrases) + {s['pointers']:,} inflection pointers")
     print(f"  size: {mb(manifest['bytes'])} raw ({mb(dict_bytes)} dict, {mb(ko_bytes)} Korean index), "
           f"{mb(manifest['gzipBytes'])} gzipped, {len(files)} files")
-    print(f'  Tatoeba pairs available: {n_pairs:,}')
-    print(f"\n  {'tier':<8}{'words':>8}{'Korean':>9}{'+base':>8}{'≥2 pairs':>10}{'≥2 ex.':>9}{'audio':>8}{'IPA':>7}")
+    print(f"\n  {'tier':<8}{'words':>8}{'Korean':>9}{'+base':>8}{'ordered':>9}{'≥2 ex.':>9}{'AI ex.':>8}{'audio':>8}{'IPA':>7}")
     for name in ('top1k', 'top3k', 'top10k', 'top30k', 'all', 'phrases'):
         t = s[name]
-        print(f"  {name:<8}{t['words']:>8,}{t['korean']:>8}%{t['koreanWithBase']:>7}%{t['pairs2']:>9}%{t['examples2']:>8}%{t['audio']:>7}%{t['ipa']:>6}%")
+        print(f"  {name:<8}{t['words']:>8,}{t['korean']:>8}%{t['koreanWithBase']:>7}%{t['ordered']:>8}%"
+              f"{t['pairs2']:>8}%{t['aiExamples']:>7}%{t['audio']:>7}%{t['ipa']:>6}%")
     print('\n  Tiers are single words by frequency rank; "phrases" are multi-word entries.')
     print('  +base    = Korean directly, or borrowed from the base word ("years" -> year)')
-    print('  ≥2 pairs = at least 2 Tatoeba sentences with Korean translations')
-    print('  ≥2 ex.   = at least 2 example sentences of any kind (Tatoeba + English-only Wiktionary)')
+    print('  ordered  = Korean meanings ordered by real usage (subtitle counts / review)')
+    print('  ≥2 ex.   = at least 2 reviewed English-Korean example pairs')
+    print('  AI ex.   = at least one example written by Gemini because too few subtitle candidates passed review')
 
 
 if __name__ == '__main__':

@@ -344,3 +344,4 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
 .tiny { font-size: 0.75rem; }
 .block { display: block; }
+.example-m { display: inline-block; margin-left: 6px; font-size: 0.75rem; padding: 1px 6px; border-radius: 6px; background: var(--accent-soft); color: var(--accent); }

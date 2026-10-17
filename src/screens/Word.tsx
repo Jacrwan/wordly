@@ -82,7 +82,17 @@ export function WordCard({ view, via, ai, aiError, retry }: {
       </header>
 
       {via && <p class="note">{t('word.via', { via, w: view.word })}</p>}
-      {viewKo(view, 4).length > 0 && <p class="word-ko">{viewKo(view, 4).join(' · ')}</p>}
+      {viewKo(view, 4).length > 0 && (
+        <p class="word-ko">
+          {viewKo(view, 4).map((k, i) => (
+            <span key={k}>
+              {i > 0 && ' · '}
+              {k}
+              {view.topKoAi.includes(k) && <AiTag />}
+            </span>
+          ))}
+        </p>
+      )}
 
       <section class="card">
         <h3>{t('word.meanings')}</h3>
@@ -140,7 +150,10 @@ export function WordCard({ view, via, ai, aiError, retry }: {
               <button class="example-en" lang="en" onClick={() => speak(x.en, 'en-US', 0.9)} aria-label={t('word.listenSentence')}>
                 {x.en}
               </button>
-              <div class="example-ko">{x.ko} {x.ai && <AiTag />}</div>
+              <div class="example-ko">
+                {x.ko} {x.ai && <AiTag />}
+                {x.meaning && <span class="example-m">{x.meaning}</span>}
+              </div>
             </li>
           ))}
         </ul>

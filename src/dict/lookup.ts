@@ -77,7 +77,7 @@ export async function koSearch(query: string, limit = 20): Promise<Suggestion[] 
 }
 
 export function koSummary(e: DictEntry, n = 3): string[] {
-  const all = [...e.pos.flatMap((b) => b.s.flatMap((s) => s.ko ?? [])), ...(e.ko ?? []), ...(e.ofKo ?? [])];
+  const all = [...(e.top ?? []), ...e.pos.flatMap((b) => b.s.flatMap((s) => s.ko ?? [])), ...(e.ko ?? []), ...(e.ofKo ?? [])];
   return [...new Set(all)].slice(0, n);
 }
 
@@ -87,7 +87,7 @@ export function audioUrl(au?: string): string | undefined {
   return `${AUDIO_BASE}${au}/${au.split('/').pop()}.mp3`;
 }
 
-const exampleCount = (e: DictEntry) => e.tt?.length ?? 0;
+const exampleCount = (e: DictEntry) => e.eg?.length ?? 0;
 const hasKorean = (e: DictEntry) => koSummary(e, 1).length > 0;
 
 /** What Gemini must fill for this word (spec: missing word, no Korean, or < 2 Korean examples). */
@@ -104,14 +104,23 @@ export function aiNeeds(entry: DictEntry | null): ('all' | 'meanings' | 'example
 export function buildView(key: string, entry: DictEntry | null, ai: AiFill | null): WordView | null {
   if (!entry && !ai?.found) return null;
   const meanings: WordView['meanings'] = [];
+  // Within each part of speech, senses whose Korean is a main meaning come first (in usage
+  // order), then other senses with Korean, then the rest: apply → 지원하다 before 대다.
+  const top = entry?.top ?? [];
+  const senseRank = (s: { ko?: string[] }) => {
+    const i = Math.min(...(s.ko ?? []).map((k) => top.indexOf(k)).filter((i) => i >= 0));
+    return Number.isFinite(i) ? i : s.ko?.length ? top.length : top.length + 1;
+  };
   for (const b of entry?.pos ?? []) {
-    // Within each part of speech, senses with Korean come first (stable): that's what a Korean
-    // learner needs, e.g. apply → 신청하다 would otherwise sit behind "more meanings".
-    const senses = [...b.s.filter((s) => s.ko?.length), ...b.s.filter((s) => !s.ko?.length)];
-    for (const s of senses) meanings.push({ p: b.p, g: s.g, ko: s.ko ?? [], ex: s.ex });
+    const senses = b.s.map((s, i) => ({ s, i })).sort((a, z) => senseRank(a.s) - senseRank(z.s) || a.i - z.i);
+    for (const { s } of senses) meanings.push({ p: b.p, g: s.g, ko: s.ko ?? [], ex: s.ex });
   }
+  // An AI fill cached before the dictionary improved is only used for what's still missing.
+  const needs = entry ? aiNeeds(entry) : ['all'];
+  const useAiMeanings = !entry || needs.includes('meanings');
+  const useAiExamples = !entry || needs.includes('examples');
   // AI meanings go first when the dictionary has no Korean, so the Korean is visible at the top.
-  const aiMeanings = (ai?.meanings ?? []).map((m) => ({ ...m, ai: true }));
+  const aiMeanings = useAiMeanings ? (ai?.meanings ?? []).map((m) => ({ ...m, ai: true })) : [];
   const ordered = entry && hasKorean(entry) ? [...meanings, ...aiMeanings] : [...aiMeanings, ...meanings];
 
   const syn = entry?.syn ?? [];
@@ -132,15 +141,17 @@ export function buildView(key: string, entry: DictEntry | null, ai: AiFill | nul
     synonyms,
     synonymsAi: synonyms.some((s) => aiSyn.includes(s)),
     examples: [
-      ...(entry?.tt ?? []).map(([en, ko]) => ({ en, ko })),
-      ...(ai?.examples ?? []).map((x) => ({ ...x, ai: true })),
+      ...(entry?.eg ?? []).map((x) => ({ en: x.e, ko: x.k, meaning: x.m, ai: x.a === 1 })),
+      ...(useAiExamples ? ai?.examples ?? [] : []).map((x) => ({ ...x, ai: true })),
     ],
+    topKo: top.length ? top : aiMeanings.flatMap((m) => m.ko).slice(0, 4),
+    topKoAi: top.length ? entry?.topAi ?? [] : aiMeanings.flatMap((m) => m.ko),
     fromAiOnly: !entry,
   };
 }
 
-/** Korean meanings for lists and saved-word snapshots. */
+/** Korean meanings for lists and saved-word snapshots, most common first. */
 export function viewKo(v: WordView, n = 3): string[] {
-  const all = [...v.meanings.flatMap((m) => m.ko), ...v.wordKo, ...(v.ofKo ?? [])];
+  const all = [...v.topKo, ...v.meanings.flatMap((m) => m.ko), ...v.wordKo, ...(v.ofKo ?? [])];
   return [...new Set(all)].slice(0, n);
 }

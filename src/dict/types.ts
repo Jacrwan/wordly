@@ -20,7 +20,9 @@ export interface DictEntry {
   ko?: string[]; // word-level Korean not tied to a sense
   syn?: string[];
   ant?: string[];
-  tt?: [string, string][]; // Tatoeba [English, Korean] pairs
+  top?: string[]; // Korean meanings, most used first (OpenSubtitles counts / Gemini review)
+  topAi?: string[]; // meanings in `top` that Gemini added (not in the dictionary)
+  eg?: { e: string; k: string; m?: string; a?: 1 }[]; // reviewed examples: English, Korean, meaning shown, AI-written
   of?: string[]; // base word(s) for inflected forms with their own senses
   ofKo?: string[]; // Korean borrowed from of[0]
 }
@@ -72,7 +74,9 @@ export interface WordView {
   ofKo?: string[];
   synonyms: string[];
   synonymsAi: boolean;
-  examples: { en: string; ko: string; ai?: boolean }[];
+  examples: { en: string; ko: string; meaning?: string; ai?: boolean }[];
+  topKo: string[]; // main Korean meanings, most common first
+  topKoAi: string[]; // items of topKo that AI added
   ipaAi: boolean;
   fromAiOnly: boolean; // the word isn't in the bundled dictionary
 }
