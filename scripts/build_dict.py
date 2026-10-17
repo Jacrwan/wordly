@@ -357,6 +357,29 @@ def dict_korean(e: dict) -> list[str]:
     return dedupe([k for b in e.get('pos', []) for s in b['s'] for k in s.get('ko', [])] + e.get('ko', []))
 
 
+_IRREGULAR: dict[str, set[str]] = {}
+
+
+def mentions_word(sentence: str, key: str, final: dict[str, dict]) -> bool:
+    """True if an example sentence uses the word (any listed or regular inflection)."""
+    if not _IRREGULAR:
+        for k, e in final.items():
+            if 'to' in e:
+                _IRREGULAR.setdefault(e['to'].lower(), set()).add(k)
+    head, _, rest = key.partition(' ')
+    forms = set()
+    for w in {head} | _IRREGULAR.get(head, set()):
+        forms |= {w, w + 's', w + 'es', w + 'ed', w + 'd', w + 'ing', w + 'er', w + 'est', w + 'ly'}
+        if w.endswith('e'):
+            forms |= {w[:-1] + 'ing', w[:-1] + 'ed'}
+        if w.endswith('y'):
+            forms |= {w[:-1] + 'ies', w[:-1] + 'ied', w[:-1] + 'ily'}
+        if len(w) > 2 and w[-1] not in 'aeiouwy':
+            forms |= {w + w[-1] + 'ed', w + w[-1] + 'ing'}
+    text = ' ' + re.sub(r"[^a-z' ]", ' ', sentence.lower().replace('’', "'")) + ' '
+    return any(f' {f}{" " + rest if rest else ""} ' in text or f" {f}'" in text for f in forms)
+
+
 def load_review(path: Path | None) -> dict[str, dict]:
     if not path or not path.exists():
         return {}
@@ -385,8 +408,9 @@ def apply_usage(final: dict[str, dict], counts: dict[str, dict], review: dict[st
             new = [m for m in r['meanings'] if m not in known]
             if new:
                 e['topAi'] = new
-            if r['examples']:
-                e['eg'] = [{key: x[key] for key in ('e', 'k', 'm', 'a') if x.get(key)} for x in r['examples']]
+            examples = [x for x in r['examples'] if mentions_word(x['e'], k, final)]
+            if examples:
+                e['eg'] = [{key: x[key] for key in ('e', 'k', 'm', 'a') if x.get(key)} for x in examples]
             reviewed += 1
             continue
         c = counts.get(k, {})

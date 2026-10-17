@@ -23,6 +23,7 @@ export interface DictEntry {
   top?: string[]; // Korean meanings, most used first (OpenSubtitles counts / Gemini review)
   topAi?: string[]; // meanings in `top` that Gemini added (not in the dictionary)
   eg?: { e: string; k: string; m?: string; a?: 1 }[]; // reviewed examples: English, Korean, meaning shown, AI-written
+  tt?: [string, string][]; // older data files: Tatoeba [English, Korean] pairs
   of?: string[]; // base word(s) for inflected forms with their own senses
   ofKo?: string[]; // Korean borrowed from of[0]
 }

@@ -87,7 +87,10 @@ export function audioUrl(au?: string): string | undefined {
   return `${AUDIO_BASE}${au}/${au.split('/').pop()}.mp3`;
 }
 
-const exampleCount = (e: DictEntry) => e.eg?.length ?? 0;
+/** Example pairs from either data format (reviewed `eg`, or `tt` in older files). */
+const entryExamples = (e: DictEntry) =>
+  e.eg?.map((x) => ({ en: x.e, ko: x.k, meaning: x.m, ai: x.a === 1 })) ?? (e.tt ?? []).map(([en, ko]) => ({ en, ko }));
+const exampleCount = (e: DictEntry) => entryExamples(e).length;
 const hasKorean = (e: DictEntry) => koSummary(e, 1).length > 0;
 
 /** What Gemini must fill for this word (spec: missing word, no Korean, or < 2 Korean examples). */
@@ -141,7 +144,7 @@ export function buildView(key: string, entry: DictEntry | null, ai: AiFill | nul
     synonyms,
     synonymsAi: synonyms.some((s) => aiSyn.includes(s)),
     examples: [
-      ...(entry?.eg ?? []).map((x) => ({ en: x.e, ko: x.k, meaning: x.m, ai: x.a === 1 })),
+      ...(entry ? entryExamples(entry) : []),
       ...(useAiExamples ? ai?.examples ?? [] : []).map((x) => ({ ...x, ai: true })),
     ],
     topKo: top.length ? top : aiMeanings.flatMap((m) => m.ko).slice(0, 4),

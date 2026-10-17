@@ -40,7 +40,8 @@ SSL = ssl.create_default_context(cafile=certifi.where())
 
 PROXY = 'https://wordly-proxy.jacrwan.workers.dev'
 GOOGLE = 'https://generativelanguage.googleapis.com'
-PREFERRED_MODELS = ['gemini-flash-latest', 'gemini-flash-lite-latest']
+# Flash-Lite was tried as a second model and accepted noticeably worse candidates, so Flash only by default.
+DEFAULT_MODELS = ['gemini-flash-latest']
 RPM_PER_MODEL = 5  # free tier
 MAX_CANDIDATES = 10
 # Subtitle lines that make poor dictionary examples: fragments, stutters, filler openers, oaths.
@@ -210,11 +211,36 @@ class Limiter:
 
 # ---------------------------------------------------------------- batches
 
-def load_dict(dict_dir: Path) -> dict[str, dict]:
+def load_dict(dict_dir: Path) -> tuple[dict[str, dict], dict[str, set[str]]]:
     entries = {}
     for f in sorted(dict_dir.glob('*.json')):
         entries.update(json.loads(f.read_text(encoding='utf-8'))['e'])
-    return {k: e for k, e in entries.items() if 'to' not in e}
+    irregular: dict[str, set[str]] = {}
+    for k, e in entries.items():
+        if 'to' in e:
+            irregular.setdefault(e['to'].lower(), set()).add(k)
+    return {k: e for k, e in entries.items() if 'to' not in e}, irregular
+
+
+def word_forms(key: str, irregular: dict[str, set[str]]) -> set[str]:
+    """Spellings an example may use for the word: listed inflections plus regular endings."""
+    head, _, rest = key.partition(' ')
+    stems = {head} | irregular.get(head, set())
+    out = set()
+    for w in stems:
+        out |= {w, w + 's', w + 'es', w + 'ed', w + 'd', w + 'ing', w + 'er', w + 'est', w + 'ly'}
+        if w.endswith('e'):
+            out |= {w[:-1] + 'ing', w[:-1] + 'ed'}
+        if w.endswith('y'):
+            out |= {w[:-1] + 'ies', w[:-1] + 'ied', w[:-1] + 'ily'}
+        if len(w) > 2 and w[-1] not in 'aeiouwy':
+            out |= {w + w[-1] + 'ed', w + w[-1] + 'ing'}
+    return {f'{f} {rest}' if rest else f for f in out}
+
+
+def mentions(sentence: str, forms: set[str]) -> bool:
+    text = ' ' + re.sub(r"[^a-z' ]", ' ', sentence.lower().replace('’', "'")) + ' '
+    return any(f' {f} ' in text or f" {f}'" in text for f in forms)
 
 
 def dict_meanings(e: dict) -> list[str]:
@@ -258,7 +284,7 @@ def build_item(key: str, e: dict, subs: dict) -> dict:
     }
 
 
-def validate(key: str, item: dict, r: dict) -> dict | None:
+def validate(key: str, item: dict, r: dict, forms: set[str]) -> dict | None:
     meanings = [m.strip() for m in r.get('meanings', []) if isinstance(m, str) and HANGUL.search(m)][:4]
     if not meanings:
         return None
@@ -266,12 +292,12 @@ def validate(key: str, item: dict, r: dict) -> dict | None:
     examples = []
     for x in r.get('examples', []):
         c = by_id.get(x.get('id'))
-        if c and not any(ex['e'] == c['en'] for ex in examples):
+        if c and mentions(c['en'], forms) and not any(ex['e'] == c['en'] for ex in examples):
             examples.append({'e': c['en'], 'k': c['ko'], 'm': x.get('meaning', '').strip()})
     for x in r.get('new_examples', []):
         if len(examples) >= 3:
             break
-        if x.get('en') and x.get('ko') and HANGUL.search(x['ko']):
+        if x.get('en') and x.get('ko') and HANGUL.search(x['ko']) and mentions(x['en'], forms):
             examples.append({'e': x['en'].strip(), 'k': x['ko'].strip(), 'm': x.get('meaning', '').strip(), 'a': 1})
     return {'key': key, 'meanings': meanings, 'examples': examples[:3]}
 
@@ -286,11 +312,19 @@ def main():
     ap.add_argument('--batch', type=int, default=20)
     ap.add_argument('--parallel', type=int, default=2, help='concurrent requests per model')
     ap.add_argument('--then-limit', type=int, help='after the --words pilot, pause, then review the top N words')
+    ap.add_argument('--models', default=','.join(DEFAULT_MODELS), help='comma-separated models to use, in order')
+    ap.add_argument('--redo-model', help='first drop earlier results from this model so they are reviewed again')
     args = ap.parse_args()
 
-    entries = load_dict(args.dict)
+    entries, irregular = load_dict(args.dict)
+    args.irregular = irregular
     with gzip.open(args.subs, 'rb') as f:
         subs = pickle.load(f)
+    if args.redo_model and args.out.exists():
+        lines = args.out.read_text(encoding='utf-8').splitlines()
+        keep = [l for l in lines if l.strip() and json.loads(l).get('model') != args.redo_model]
+        args.out.write_text(''.join(l + '\n' for l in keep), encoding='utf-8')
+        log(f'dropped {len(lines) - len(keep):,} results from {args.redo_model}; they will be reviewed again')
     client = None
     phases = [args.words, None] if args.words and args.then_limit else [args.words]
     for phase, words in enumerate(phases):
@@ -318,7 +352,8 @@ def review(args, entries, subs, words, client):
 
     client = client or Client()
     available = client.models()
-    models = [m for m in PREFERRED_MODELS if m in available] or [m for m in available if 'flash' in m][:1]
+    wanted = [m.strip() for m in args.models.split(',') if m.strip()]
+    models = [m for m in wanted if m in available] or [m for m in available if 'flash' in m][:1]
     log(f'models: {", ".join(models)}')
     limiter = Limiter(models)
 
@@ -347,7 +382,7 @@ def review(args, entries, subs, words, client):
         results = {r.get('id'): r for r in data.get('results', [])}
         lines = []
         for i, (key, item) in items.items():
-            v = results.get(i) and validate(key, item, results[i])
+            v = results.get(i) and validate(key, item, results[i], word_forms(key, args.irregular))
             if v:
                 v['model'] = model
                 lines.append(json.dumps(v, ensure_ascii=False))
@@ -363,9 +398,16 @@ def review(args, entries, subs, words, client):
             eta = f', ~{left / rate / 60:.0f} min left' if rate else ''
             log(f'  batch {progress["batches"]}/{len(batches)}: {progress["words"]:,} words reviewed{skipped}{eta}')
 
-    with ThreadPoolExecutor(max_workers=args.parallel * len(models)) as pool:
+    pool = ThreadPoolExecutor(max_workers=args.parallel * len(models))
+    try:
         for fut in as_completed([pool.submit(run, b) for b in batches]):
             fut.result()
+    except (KeyboardInterrupt, SystemExit):
+        # Ctrl-C or quota exhaustion: drop queued batches instead of letting worker threads continue.
+        pool.shutdown(wait=False, cancel_futures=True)
+        log('stopped; finished batches are saved and the rest will be reviewed on the next run')
+        os._exit(0)
+    pool.shutdown()
     log(f'finished in {(time.time() - t0) / 60:.0f} min: {progress["words"]:,} reviewed, {progress["failed"]:,} skipped '
         '(skipped words are retried on the next run)')
     return client
