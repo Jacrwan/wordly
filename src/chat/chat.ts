@@ -27,7 +27,7 @@ const MAX_TARGETS = 6;
 const HISTORY_TURNS = 16;
 
 /** Saved words to practice: recall cards that are due first, then other learning words. */
-export async function pickTargets(): Promise<Target[]> {
+export async function pickTargets(limit = MAX_TARGETS): Promise<Target[]> {
   const words = (await db.myWords.toArray()).filter((w) => w.status !== 'archived');
   const recall = new Map((await db.cards.where('word').anyOf(words.map((w) => w.word)).toArray())
     .filter((c) => c.dir === 'ko2en').map((c) => [c.word, c.due.getTime()]));
@@ -36,7 +36,7 @@ export async function pickTargets(): Promise<Target[]> {
     (recall.get(w.word) ?? Infinity) <= now ? 0 : w.status === 'learning' ? 1 : 2;
   return words
     .sort((a, b) => score(a) - score(b) || (recall.get(a.word) ?? 0) - (recall.get(b.word) ?? 0) || Math.random() - 0.5)
-    .slice(0, MAX_TARGETS)
+    .slice(0, limit)
     .map((w) => ({ key: w.word, display: w.display, ko: w.ko }));
 }
 

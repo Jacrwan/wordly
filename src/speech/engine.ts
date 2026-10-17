@@ -8,7 +8,7 @@
 export type Lang = 'en-US' | 'ko-KR';
 
 export type Segment =
-  | { kind: 'say'; text: string; lang: Lang; group: number; part?: string }
+  | { kind: 'say'; text: string; lang: Lang; group: number; part?: string; alt?: boolean }
   | { kind: 'pause'; ms: number; group: number };
 
 export interface QueueState {
@@ -51,11 +51,18 @@ export function pickVoice(lang: Lang): SpeechSynthesisVoice | undefined {
   );
 }
 
-export function utterance(text: string, lang: Lang, rate: number): SpeechSynthesisUtterance {
+/** A second voice for the same language (e.g. the other podcast host), if the device has one. */
+export function altVoice(lang: Lang): SpeechSynthesisVoice | undefined {
+  const main = pickVoice(lang);
+  const others = voicesFor(lang).filter((v) => v.name !== main?.name && v.lang.replace('_', '-') === lang);
+  return others.find((v) => v.localService && /daniel|aaron|fred|alex|tom|reed|rocko/i.test(v.name)) ?? others.find((v) => v.localService) ?? others[0];
+}
+
+export function utterance(text: string, lang: Lang, rate: number, alt = false): SpeechSynthesisUtterance {
   const u = new SpeechSynthesisUtterance(text);
   u.lang = lang;
   u.rate = rate;
-  const voice = pickVoice(lang);
+  const voice = (alt && altVoice(lang)) || pickVoice(lang);
   if (voice) u.voice = voice;
   return u;
 }
@@ -168,7 +175,7 @@ export class SpeechQueue {
     // A short gap after cancel(): iOS can drop an utterance spoken immediately after it.
     this.timer = setTimeout(() => {
       if (t !== this.token) return;
-      const u = utterance(seg.text, seg.lang, this.rate);
+      const u = utterance(seg.text, seg.lang, this.rate, seg.alt);
       u.onend = u.onerror = () => t === this.token && this.advance();
       window.speechSynthesis.speak(u);
     }, 60);

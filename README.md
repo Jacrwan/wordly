@@ -2,7 +2,7 @@
 
 An English vocabulary app for Korean speakers. It's an installable PWA (Progressive Web App) that runs fully on the phone. There are no accounts, and every bit of user data stays in the device's IndexedDB. The only server is a tiny Cloudflare Worker that holds the Gemini key. The UI is Korean by default and can be switched to English.
 
-> **Status:** steps 1–2 of 8 are done (PWA shell, Settings, Gemini proxy, offline dictionary data). Live at https://jacrwan.github.io/wordly/. See [docs/PLAN.md](docs/PLAN.md) for the build order, the data model and the per-step phone test checklists.
+> **Status:** all 8 steps are built and deployed at https://jacrwan.github.io/wordly/. The reviewed dictionary examples (OpenSubtitles + Gemini review of the top 10k words) are still being generated with `npm run review` and ship once complete.
 
 ## Features
 
@@ -16,7 +16,7 @@ An English vocabulary app for Korean speakers. It's an installable PWA (Progress
 | **Text reader** | Paste any text and have it read aloud, sentence by sentence with a highlight. Tap a word to look it up. |
 | **Recommendations** | Word packs generated from your profile, plus fixed packs: Workplace, Medical, Housing/Banking, Visa/Immigration, TOEFL and Konglish false friends. |
 | **Conversation** | Role-play chats (job interview, doctor, landlord, coworker, restaurant, free talk) that steer you toward your saved words and correct misuse. |
-| **Podcast** | Two-host episodes of 3–5 minutes built around 8–12 of your words that are due for review, at Beginner, Intermediate or Advanced language level. |
+| **Podcast** | Two-host episodes of 3–5 minutes built around 8–12 of your words that are due for review, at Beginner, Intermediate or Advanced language level. Voiced with Gemini multi-speaker TTS and saved on the phone, so they keep playing with the screen locked. |
 
 Mastery only goes up through **active recall**: reviewing a word, or using it correctly in a conversation. Listening never counts.
 

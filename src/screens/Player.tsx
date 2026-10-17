@@ -185,7 +185,13 @@ export function Transport({ playing, onPrev, onToggle, onNext }: { playing: bool
   );
 }
 
-export function SpeedLoop({ rate, onRate, loop, onLoop }: { rate: number; onRate: (r: number) => void; loop: boolean; onLoop: (l: boolean) => void }) {
+export function SpeedLoop({ rate, onRate, loop, onLoop, hideLoop }: {
+  rate: number;
+  onRate: (r: number) => void;
+  loop: boolean;
+  onLoop: (l: boolean) => void;
+  hideLoop?: boolean;
+}) {
   const { t } = useApp();
   return (
     <div class="speed-loop">
@@ -194,7 +200,7 @@ export function SpeedLoop({ rate, onRate, loop, onLoop }: { rate: number; onRate
         <input type="range" min="0.5" max="1.5" step="0.1" value={rate}
           onInput={(e) => onRate(Number(e.currentTarget.value))} aria-label={t('player.speed')} />
       </label>
-      <button class={`chip ${loop ? 'on' : ''}`} aria-pressed={loop} onClick={() => onLoop(!loop)}>🔁 {t('player.loop')}</button>
+      {!hideLoop && <button class={`chip ${loop ? 'on' : ''}`} aria-pressed={loop} onClick={() => onLoop(!loop)}>🔁 {t('player.loop')}</button>}
     </div>
   );
 }
