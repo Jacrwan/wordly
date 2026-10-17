@@ -1,4 +1,4 @@
-import { chatModels, connFrom, generateJSON } from '../ai/gemini';
+import { chatModels, connFrom, generateJSONFast } from '../ai/gemini';
 import { findEntry, normalize } from '../dict/lookup';
 import { db, type Level, type Settings } from '../db/schema';
 import { rate, Rating } from '../srs';
@@ -102,14 +102,17 @@ export async function takeTurn(scenario: Scenario, targets: Target[], history: T
   if (!conn || !models.length) throw new Error('unavailable');
   const past = history.slice(-HISTORY_TURNS).map((t) => ({ role: t.role, text: t.text }));
   if (past[0]?.role === 'model') past.unshift({ role: 'user', text: OPENING });
-  const { data } = await generateJSON<TurnResult>(conn, {
-    models,
+  // The opening greeting is simple, so the fast Lite model goes first (≈0.6 s instead of 3 s+).
+  const order = message === null ? [models[models.length - 1], ...models.slice(0, -1)] : models;
+  const { data } = await generateJSONFast<TurnResult>(conn, {
+    models: order,
     system: systemPrompt(scenario, targets, settings),
     history: past,
     prompt: message ?? OPENING,
     schema: TURN_SCHEMA,
     temperature: 0.8,
     thinkingLevel: 'low',
+    timeoutMs: 8_000, // a stuck model shouldn't hold up the conversation
   });
   return data;
 }

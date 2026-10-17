@@ -24,12 +24,14 @@ export class GeminiError extends Error {
   readonly kind: GeminiErrorKind;
   readonly status?: number;
   readonly retryAfterMs?: number; // from Google's RetryInfo on 429s
+  readonly daily?: boolean; // the model's free daily allowance is used up
 
-  constructor(message: string, kind: GeminiErrorKind, status?: number, retryAfterMs?: number) {
+  constructor(message: string, kind: GeminiErrorKind, status?: number, retryAfterMs?: number, daily?: boolean) {
     super(message);
     this.kind = kind;
     this.status = status;
     this.retryAfterMs = retryAfterMs;
+    this.daily = daily;
   }
 }
 
@@ -39,26 +41,36 @@ export interface ModelInfo {
   methods: string[];
 }
 
-export async function request<T>(conn: Conn, path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(conn: Conn, path: string, init: RequestInit = {}, timeoutMs = 0, cancel?: AbortSignal): Promise<T> {
   const base = conn.kind === 'proxy' ? PROXY_URL : GOOGLE;
   const headers = new Headers(init.headers);
   if (conn.kind === 'proxy') headers.set('X-Family-Code', conn.code);
   else headers.set('x-goog-api-key', conn.key);
   if (init.body) headers.set('Content-Type', 'application/json');
 
+  // A model that doesn't answer in time is treated like an overloaded one (try the next).
+  const abort = new AbortController();
+  const timer = timeoutMs ? setTimeout(() => abort.abort(), timeoutMs) : 0;
+  cancel?.addEventListener('abort', () => abort.abort());
   let res: Response;
   try {
-    res = await fetch(`${base}/v1beta/${path}`, { ...init, headers });
+    res = await fetch(`${base}/v1beta/${path}`, { ...init, headers, signal: abort.signal });
   } catch {
+    if (cancel?.aborted) throw new GeminiError('cancelled', 'http', 0);
+    if (abort.signal.aborted) throw new GeminiError('timed out', 'rate-limit', 0, 0);
     throw new GeminiError('network error', 'network');
+  } finally {
+    if (timer) clearTimeout(timer);
   }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const msg: string = body?.error?.message ?? res.statusText;
-    const retry = (body?.error?.details ?? []).find((d: { retryDelay?: string }) => d.retryDelay)?.retryDelay;
+    const details: { retryDelay?: string; violations?: { quotaId?: string }[] }[] = body?.error?.details ?? [];
+    const retry = details.find((d) => d.retryDelay)?.retryDelay;
+    const daily = details.some((d) => d.violations?.some((v) => v.quotaId?.includes('PerDay')));
     // Overloaded models (503 "high demand") get a short default wait.
     const retryAfterMs = retry ? Math.ceil(parseFloat(retry) * 1000) : res.status >= 500 ? 5000 : undefined;
-    throw new GeminiError(msg, errorKind(conn, res.status, body?.error?.code, msg), res.status, retryAfterMs);
+    throw new GeminiError(msg, errorKind(conn, res.status, body?.error?.code, msg), res.status, retryAfterMs, daily);
   }
   return res.json();
 }
@@ -126,14 +138,14 @@ function pickFamily(ids: string[], family: 'flash' | 'pro'): string | null {
 }
 
 /**
- * Models for conversation, best first: the Pro model, then the fast model, then other full
- * Flash versions and Lite. On the free tier each has its own small daily allowance, so a long
+ * Models for conversation, best first: the fast model, then other full Flash versions, then Lite. On the free tier each has its own small daily allowance, so a long
  * chat can move down the list instead of stopping.
  */
 export function chatModels(choice: ModelChoice | null): string[] {
   if (!choice) return [];
-  const extra = ['gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview'];
-  const list = [choice.long, choice.lookup, ...extra.filter((m) => choice.available.includes(m)), ...lookupModels(choice).slice(1)];
+  // Pro is left out: conversation needs quick replies, and the spec allows Flash when Pro is slow.
+  const extra = ['gemini-3-flash-preview', 'gemini-3.5-flash', 'gemini-3.6-flash', 'gemini-3.7-flash'];
+  const list = [choice.lookup, ...extra.filter((m) => choice.available.includes(m)), ...lookupModels(choice).slice(1)];
   return [...new Set(list.filter((m): m is string => !!m))];
 }
 
@@ -173,9 +185,45 @@ export interface JsonRequest {
   thinkingLevel?: 'low' | 'high';
   /** Called when every model is rate-limited and we're waiting to retry. */
   onWait?: (ms: number) => void;
+  /** Give up on a model after this long and try the next (default 30 s). */
+  timeoutMs?: number;
 }
 
 const MAX_RETRY_WAIT_MS = 30_000;
+
+// Models that just failed are tried last for a while, so later requests skip the detour:
+// overloaded / timed out → 2 minutes; free daily allowance used up → 6 hours.
+const COOL_KEY = 'wordly.modelCooldowns';
+const coolUntil = new Map<string, number>(loadCooldowns());
+
+// Kept on the device so a new chat (or a restart) doesn't rediscover failing models.
+function loadCooldowns(): [string, number][] {
+  try {
+    const now = Date.now();
+    return Object.entries(JSON.parse(localStorage.getItem(COOL_KEY) ?? '{}') as Record<string, number>).filter(([, t]) => t > now);
+  } catch {
+    return [];
+  }
+}
+const OVERLOAD_COOLDOWN_MS = 2 * 60_000;
+const DAILY_COOLDOWN_MS = 6 * 60 * 60_000;
+
+function coolDown(model: string, e: GeminiError): void {
+  const ms = e.daily ? DAILY_COOLDOWN_MS : e.status === 429 ? Math.max(e.retryAfterMs ?? 60_000, 10_000) : OVERLOAD_COOLDOWN_MS;
+  coolUntil.set(model, Date.now() + ms);
+  try {
+    localStorage.setItem(COOL_KEY, JSON.stringify(Object.fromEntries(coolUntil)));
+  } catch {
+    // Storage blocked: cooldowns just last for this session.
+  }
+}
+
+/** Healthy models first (keeping their order), recently failed ones after. */
+function byHealth(models: string[]): string[] {
+  const now = Date.now();
+  const ok = models.filter((m) => (coolUntil.get(m) ?? 0) <= now);
+  return [...ok, ...models.filter((m) => !ok.includes(m))];
+}
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
@@ -184,7 +232,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * the delay Google suggests.
  */
 export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<{ data: T; model: string }> {
-  const models = [...new Set(req.models.filter(Boolean))];
+  const models = byHealth([...new Set(req.models.filter(Boolean))]);
   let waited = false;
   for (;;) {
     let shortestWait = Infinity;
@@ -195,6 +243,7 @@ export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<{ d
         // A model this key can't use (e.g. retired, or not on the free tier): try the next one.
         if (e instanceof GeminiError && e.status === 404 && model !== models[models.length - 1]) continue;
         if (!(e instanceof GeminiError) || e.kind !== 'rate-limit') throw e;
+        coolDown(model, e);
         shortestWait = Math.min(shortestWait, e.retryAfterMs ?? 60_000);
         if (model === models[models.length - 1] && (waited || shortestWait > MAX_RETRY_WAIT_MS)) throw e;
       }
@@ -205,7 +254,63 @@ export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<{ d
   }
 }
 
-async function generateOnce<T>(conn: Conn, model: string, req: JsonRequest, withThinking = true): Promise<T> {
+/**
+ * Like generateJSON, but for interactive use (conversation): if the current model hasn't answered
+ * within `hedgeMs`, the next model is started in parallel and the first good answer wins (the
+ * other request is cancelled). A failing model starts the next one immediately.
+ */
+export async function generateJSONFast<T>(conn: Conn, req: JsonRequest, hedgeMs = 3500): Promise<{ data: T; model: string }> {
+  const models = byHealth([...new Set(req.models.filter(Boolean))]);
+  return new Promise((resolve, reject) => {
+    const controllers: AbortController[] = [];
+    let next = 0;
+    let running = 0;
+    let settled = false;
+    let lastError: unknown = null;
+    let hedge: ReturnType<typeof setTimeout> | null = null;
+
+    const finish = (fn: () => void) => {
+      if (settled) return;
+      settled = true;
+      if (hedge) clearTimeout(hedge);
+      controllers.forEach((c) => c.abort());
+      fn();
+    };
+
+    const launch = () => {
+      if (settled || next >= models.length) {
+        if (!running && !settled) {
+          // Everything failed fast: fall back to the patient path (waits for rate limits).
+          generateJSON<T>(conn, req).then((r) => finish(() => resolve(r)), (e) => finish(() => reject(lastError ?? e)));
+        }
+        return;
+      }
+      const model = models[next++];
+      const ctl = new AbortController();
+      controllers.push(ctl);
+      running++;
+      if (hedge) clearTimeout(hedge);
+      hedge = setTimeout(launch, hedgeMs);
+      generateOnce<T>(conn, model, req, true, ctl.signal).then(
+        (data) => finish(() => resolve({ data, model })),
+        (e) => {
+          running--;
+          if (settled) return;
+          lastError = e;
+          // Errors every model would hit (wrong code, bad key, offline) end the turn; anything
+          // else (overloaded, quota, timeout, unreadable answer) moves on to the next model.
+          const fatal = !(e instanceof GeminiError) || ['bad-code', 'invalid-key', 'proxy-config', 'network'].includes(e.kind);
+          if (fatal) return finish(() => reject(e));
+          if (e.kind === 'rate-limit') coolDown(model, e);
+          launch();
+        },
+      );
+    };
+    launch();
+  });
+}
+
+async function generateOnce<T>(conn: Conn, model: string, req: JsonRequest, withThinking = true, cancel?: AbortSignal): Promise<T> {
   const body = {
     systemInstruction: { parts: [{ text: req.system }] },
     contents: [
@@ -221,11 +326,11 @@ async function generateOnce<T>(conn: Conn, model: string, req: JsonRequest, with
   };
   let res: { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[] };
   try {
-    res = await request(conn, `models/${model}:generateContent`, { method: 'POST', body: JSON.stringify(body) });
+    res = await request(conn, `models/${model}:generateContent`, { method: 'POST', body: JSON.stringify(body) }, req.timeoutMs ?? 30_000, cancel);
   } catch (e) {
     // Some models don't accept thinking settings; ask again without them.
     if (withThinking && req.thinkingLevel && e instanceof GeminiError && e.status === 400 && /think/i.test(e.message)) {
-      return generateOnce<T>(conn, model, req, false);
+      return generateOnce<T>(conn, model, req, false, cancel);
     }
     throw e;
   }
