@@ -44,7 +44,7 @@ GOOGLE = 'https://generativelanguage.googleapis.com'
 # On the free tier each model has its own small daily allowance, so the run moves down
 # this list as models run out, and picks up again the next day.
 DEFAULT_MODELS = ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
-                  'gemini-3-flash-preview', 'gemini-2.5-flash']
+                  'gemini-3-flash-preview']
 RPM_PER_MODEL = 5  # free tier
 MAX_CANDIDATES = 10
 # Subtitle lines that make poor dictionary examples: fragments, stutters, filler openers, oaths.
@@ -117,6 +117,10 @@ class RateLimited(Exception):
         self.retry_s, self.daily, self.limit = retry_s, daily, limit
 
 
+class Unavailable(Exception):
+    """The model is listed but can't be used (e.g. retired for new users)."""
+
+
 class Client:
     def __init__(self):
         key = os.environ.get('GEMINI_API_KEY')
@@ -145,6 +149,8 @@ class Client:
                 raise RateLimited(float(retry.rstrip('s') or 60), bool(daily), daily[0].get('quotaValue', '') if daily else '')
             if e.code == 401 and err.get('code') == 'FAMILY_CODE':
                 sys.exit('Wrong family code.')
+            if e.code == 404:
+                raise Unavailable(err.get('message', '')[:200])
             raise RuntimeError(f'HTTP {e.code}: {err.get("message", "")[:300]}')
 
     def models(self) -> list[str]:
@@ -204,6 +210,12 @@ class Limiter:
                         q.append(now)
                         return m
             time.sleep(1)
+
+    def drop(self, model: str, reason: str):
+        with self.lock:
+            if model not in self.daily_out:
+                self.daily_out.add(model)
+                log(f'  {model}: not usable ({reason[:80]}); skipping it')
 
     def limited(self, model: str, e: RateLimited):
         with self.lock:
@@ -380,6 +392,8 @@ def review(args, entries, subs, words, client):
                 break
             except RateLimited as e:
                 limiter.limited(model, e)
+            except Unavailable as e:
+                limiter.drop(model, str(e))
             except (RuntimeError, json.JSONDecodeError, urllib.error.URLError, TimeoutError) as e:
                 log(f'  {model}: {str(e)[:160]} (retry {attempt + 1})')
                 time.sleep(5)
