@@ -5,7 +5,7 @@
 // endpoints the app uses. Responses (including streams and audio) pass through as-is.
 
 const UPSTREAM = 'https://generativelanguage.googleapis.com';
-const MAX_BODY_BYTES = 1_000_000;
+const MAX_BODY_BYTES = 6_000_000; // room for voice recordings (≈1.3 MB per 30 s)
 
 // GET  /v1beta/models                       list models
 // GET  /v1beta/models/{id}                  model info

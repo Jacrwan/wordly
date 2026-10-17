@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from 'preact/hooks';
 import { GeminiError } from '../ai/gemini';
-import { creditWord, pickTargets, presentTargets, saveChat, takeTurn, type Target, type Turn } from '../chat/chat';
+import { creditWord, pickTargets, presentTargets, saveChat, takeTurn, type Target, type Turn, type Voice } from '../chat/chat';
 import { SCENARIOS, type Scenario } from '../chat/scenarios';
 import { Page } from '../components/Layout';
-import { useDictation } from '../hooks/useDictation';
+import { useRecorder } from '../hooks/useRecorder';
 import { href } from '../router';
 import { speak } from '../speech/speak';
 import { useApp } from '../state';
-
-const KEYBOARD_MIC_KEY = 'wordly.keyboardMic';
 
 export function Chat({ scenarioId }: { scenarioId?: string }) {
   const scenario = SCENARIOS.find((s) => s.id === scenarioId);
@@ -56,37 +54,14 @@ function ChatSession({ scenario }: { scenario: Scenario }) {
   const chatId = useRef<number | undefined>(undefined);
   const startedAt = useRef(Date.now());
   const bottom = useRef<HTMLDivElement>(null);
-  const dictation = useDictation(setInput);
-  const textarea = useRef<HTMLTextAreaElement>(null);
-  // After iOS's recognition hangs once, the 🎤 button opens the keyboard (whose own dictation
-  // key works) instead. Remembered on this device.
-  const [keyboardMic, setKeyboardMic] = useState(() => {
-    try {
-      return localStorage.getItem(KEYBOARD_MIC_KEY) === '1';
-    } catch {
-      return false;
-    }
-  });
-  const [micTip, setMicTip] = useState(false);
-  useEffect(() => {
-    if (dictation.error !== 'stuck') return;
-    setKeyboardMic(true);
-    setMicTip(true);
-    try {
-      localStorage.setItem(KEYBOARD_MIC_KEY, '1');
-    } catch {
-      // Not remembered; it will be detected again next time.
-    }
-  }, [dictation.error]);
+  // Voice: the app records the mic itself and Gemini transcribes it in the same call as the
+  // reply (iOS's own speech recognition freezes after the page has played audio).
+  const recorder = useRecorder((wav) => turn({ wav }));
 
   function micTap() {
-    if (keyboardMic) {
-      textarea.current?.focus(); // inside the tap, so iOS opens the keyboard
-      setMicTip(true);
-      return;
-    }
-    if (dictation.listening) dictation.stop();
-    else dictation.start();
+    if (busy) return;
+    if (recorder.state === 'recording') recorder.stop();
+    else recorder.start();
   }
 
   const say = (text: string) => autoRead && speak(text, 'en-US', settings.speech.rate);
@@ -126,18 +101,27 @@ function ChatSession({ scenario }: { scenario: Scenario }) {
     bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
   }, [turns.length, busy]);
 
-  async function send() {
+  function send() {
     const text = input.trim();
     if (!text || busy) return;
-    dictation.stop();
     setInput('');
+    turn(text);
+  }
+
+  /** One exchange with typed text or a voice recording. */
+  async function turn(message: string | Voice) {
+    if (busy) return;
     setError('');
-    const userTurn: Turn = { role: 'user', text };
-    const history = [...turns, userTurn];
-    setTurns(history);
+    const typed = typeof message === 'string';
+    const userTurn: Turn = { role: 'user', text: typed ? message : '🎤 …' };
+    setTurns([...turns, userTurn]);
     setBusy(true);
     try {
-      const [r, present] = await Promise.all([takeTurn(scenario, targets, turns, text, settings), presentTargets(text, targets)]);
+      const r = await takeTurn(scenario, targets, turns, message, settings);
+      const text = typed ? message : r.learnerText.trim();
+      if (!text) throw new Error('unheard');
+      userTurn.text = text;
+      const present = await presentTargets(text, targets);
       // Credit only words Gemini judged correct AND that really appear in the message, once per chat.
       const used = targets
         .filter((x) => present.has(x.key) && r.usedCorrectly.some((u) => u.toLowerCase() === x.display.toLowerCase() || u.toLowerCase() === x.key))
@@ -157,9 +141,9 @@ function ChatSession({ scenario }: { scenario: Scenario }) {
       say(r.reply);
       chatId.current = await saveChat(chatId.current, scenario.id, next, nowCredited, startedAt.current);
     } catch (e) {
-      setError(failMessage(e));
+      setError((e as Error).message === 'unheard' ? t('chat.micUnclear') : failMessage(e));
       setTurns(turns); // let the learner resend
-      setInput(text);
+      if (typed) setInput(message);
     } finally {
       setBusy(false);
     }
@@ -201,23 +185,24 @@ function ChatSession({ scenario }: { scenario: Scenario }) {
         </section>
       ) : (
         <div class="chat-input">
-          <textarea ref={textarea} class="input" rows={1} value={input} placeholder={dictation.listening ? t('chat.listening') : t('chat.placeholder')}
+          <textarea class="input" rows={1} value={input} placeholder={recorder.state === 'recording' ? t('chat.listening') : t('chat.placeholder')}
             lang="en" autocapitalize="sentences" enterkeyhint="send"
             onInput={(e) => setInput(e.currentTarget.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } }} />
-          {dictation.supported && (
-            <button class={`btn icon-btn mic ${dictation.listening ? 'on' : ''}`} onClick={micTap} aria-label={t('chat.mic')}>🎤</button>
+          {recorder.supported && (
+            <button class={`btn icon-btn mic ${recorder.state === 'recording' ? 'on' : ''}`} disabled={busy} onClick={micTap}
+              aria-label={recorder.state === 'recording' ? t('chat.micStop') : t('chat.mic')}
+              style={recorder.state === 'recording' ? { boxShadow: `0 0 0 ${4 + Math.round(recorder.level * 10)}px rgb(220 38 38 / 0.35)` } : undefined}>
+              {recorder.state === 'recording' ? '■' : '🎤'}
+            </button>
           )}
           <button class="btn primary send" disabled={busy || !input.trim()} onClick={send} aria-label={t('chat.send')}>↑</button>
         </div>
       )}
-      {micTip ? (
-        <p class="mic-tip small">{t('chat.micKeyboard')}</p>
-      ) : dictation.error && (
+      {recorder.state === 'recording' && <p class="mic-tip small">{t('chat.recording')}</p>}
+      {recorder.error && recorder.state === 'error' && (
         <p class="muted small">
-          {dictation.error === 'no-speech' ? t('chat.micNoSpeech')
-            : dictation.error === 'not-allowed' ? t('chat.micDenied')
-            : t('chat.micError', { e: dictation.error })}
+          {recorder.error === 'not-allowed' ? t('chat.micDenied') : recorder.error === 'no-speech' ? t('chat.micNoSpeech') : t('chat.micError', { e: recorder.error })}
         </p>
       )}
       {!ended && turns.length > 1 && <button class="btn ghost block gap-top" onClick={() => setEnded(true)}>{t('chat.end')}</button>}

@@ -177,6 +177,8 @@ export interface JsonRequest {
   models: string[];
   system: string;
   prompt: string;
+  /** Extra parts for the newest user turn, e.g. a voice recording ({ inlineData: { mimeType, data } }). */
+  promptParts?: object[];
   /** Earlier turns of a conversation, sent before `prompt` (which is the newest user turn). */
   history?: { role: 'user' | 'model'; text: string }[];
   schema: object; // Gemini responseSchema (OpenAPI subset)
@@ -315,7 +317,7 @@ async function generateOnce<T>(conn: Conn, model: string, req: JsonRequest, with
     systemInstruction: { parts: [{ text: req.system }] },
     contents: [
       ...(req.history ?? []).map((m) => ({ role: m.role, parts: [{ text: m.text }] })),
-      { role: 'user', parts: [{ text: req.prompt }] },
+      { role: 'user', parts: [...(req.promptParts ?? []), { text: req.prompt }] },
     ],
     generationConfig: {
       responseMimeType: 'application/json',
