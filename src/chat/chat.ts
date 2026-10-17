@@ -58,10 +58,9 @@ const TURN_SCHEMA = {
     usedCorrectly: { type: 'ARRAY', items: STR, description: "target words used correctly in the learner's LAST message" },
     misused: { type: 'ARRAY', items: STR, description: "target words used incorrectly in the learner's LAST message" },
     hintKo: { ...STR, description: 'short Korean hint for what the learner could say next' },
-    learnerText: { ...STR, description: "if the learner's last message is audio: exactly what they said, in English; otherwise empty" },
   },
-  required: ['learnerText', 'reply', 'replyKo', 'correctionOriginal', 'correctionBetter', 'correctionNoteKo', 'usedCorrectly', 'misused', 'hintKo'],
-  propertyOrdering: ['learnerText', 'reply', 'replyKo', 'correctionOriginal', 'correctionBetter', 'correctionNoteKo', 'usedCorrectly', 'misused', 'hintKo'],
+  required: ['reply', 'replyKo', 'correctionOriginal', 'correctionBetter', 'correctionNoteKo', 'usedCorrectly', 'misused', 'hintKo'],
+  propertyOrdering: ['reply', 'replyKo', 'correctionOriginal', 'correctionBetter', 'correctionNoteKo', 'usedCorrectly', 'misused', 'hintKo'],
 };
 
 function systemPrompt(scenario: Scenario, targets: Target[], settings: Settings): string {
@@ -86,7 +85,6 @@ function systemPrompt(scenario: Scenario, targets: Target[], settings: Settings)
 const OPENING = '(Start the conversation now: greet me and set the scene in one or two sentences, in character.)';
 
 interface TurnResult {
-  learnerText: string;
   reply: string;
   replyKo: string;
   correctionOriginal: string;
@@ -101,16 +99,32 @@ export interface Voice {
   wav: string; // base64 16 kHz mono WAV
 }
 
-const VOICE_PROMPT =
-  '(The learner answered out loud; the recording is attached. First write exactly what they said into learnerText — ' +
-  "keep their mistakes, don't correct the transcript — then respond to it as usual. If the recording is silent or " +
-  'unintelligible, set learnerText to an empty string and ask them, in character, to say it again.)';
-
 /**
- * Runs one exchange. `message` is the learner's typed message, a voice recording (transcribed by
- * Gemini in the same call), or null to have Gemini open the scene.
+ * Turns a voice recording into text for the reply box (the learner checks it before sending).
+ * The fast Lite model goes first; mistakes are kept so corrections still work.
  */
-export async function takeTurn(scenario: Scenario, targets: Target[], history: Turn[], message: string | Voice | null, settings: Settings) {
+export async function transcribe(voice: Voice, settings: Settings): Promise<string> {
+  const conn = connFrom(settings);
+  const models = chatModels(settings.models);
+  if (!conn || !models.length) throw new Error('unavailable');
+  const order = [models[models.length - 1], ...models.slice(0, -1)];
+  const { data } = await generateJSONFast<{ text: string }>(conn, {
+    models: order,
+    system: 'You transcribe short spoken English from a language learner.',
+    prompt:
+      'Write exactly what the speaker says, in English. Keep their grammar mistakes and word choices; ' +
+      'only add normal punctuation. If there is no intelligible speech, return an empty string.',
+    promptParts: [{ inlineData: { mimeType: 'audio/wav', data: voice.wav } }],
+    schema: { type: 'OBJECT', properties: { text: { type: 'STRING' } }, required: ['text'] },
+    temperature: 0,
+    thinkingLevel: 'low',
+    timeoutMs: 8_000,
+  });
+  return (data.text ?? '').trim();
+}
+
+/** Runs one exchange. `message` is the learner's message, or null to have Gemini open the scene. */
+export async function takeTurn(scenario: Scenario, targets: Target[], history: Turn[], message: string | null, settings: Settings) {
   const conn = connFrom(settings);
   const models = chatModels(settings.models);
   if (!conn || !models.length) throw new Error('unavailable');
@@ -122,8 +136,7 @@ export async function takeTurn(scenario: Scenario, targets: Target[], history: T
     models: order,
     system: systemPrompt(scenario, targets, settings),
     history: past,
-    prompt: message === null ? OPENING : typeof message === 'string' ? message : VOICE_PROMPT,
-    promptParts: message && typeof message !== 'string' ? [{ inlineData: { mimeType: 'audio/wav', data: message.wav } }] : undefined,
+    prompt: message ?? OPENING,
     schema: TURN_SCHEMA,
     temperature: 0.8,
     thinkingLevel: 'low',
