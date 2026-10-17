@@ -182,6 +182,7 @@ export const en: Record<StringKey, string> = {
   'chat.listening': 'Listening… go ahead',
   'chat.mic': 'Speak',
   'chat.micError': "Voice input isn't available ({e}). Try the keyboard's 🎤 dictation key.",
+  'chat.micKeyboard': "On iPhone this mic can freeze after audio plays. Tap the reply box and use the 🎤 dictation key at the bottom of the keyboard.",
   'chat.micNoSpeech': "Didn't hear anything. Tap 🎤 and speak again, or use the keyboard's 🎤 dictation key.",
   'chat.micDenied': "Microphone access is off. Allow microphone and speech recognition in iPhone Settings, or use the keyboard's 🎤 dictation key.",
   'chat.send': 'Send',

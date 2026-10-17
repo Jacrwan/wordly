@@ -8,6 +8,8 @@ import { href } from '../router';
 import { speak } from '../speech/speak';
 import { useApp } from '../state';
 
+const KEYBOARD_MIC_KEY = 'wordly.keyboardMic';
+
 export function Chat({ scenarioId }: { scenarioId?: string }) {
   const scenario = SCENARIOS.find((s) => s.id === scenarioId);
   return scenario ? <ChatSession key={scenario.id} scenario={scenario} /> : <ScenarioPicker />;
@@ -55,6 +57,37 @@ function ChatSession({ scenario }: { scenario: Scenario }) {
   const startedAt = useRef(Date.now());
   const bottom = useRef<HTMLDivElement>(null);
   const dictation = useDictation(setInput);
+  const textarea = useRef<HTMLTextAreaElement>(null);
+  // After iOS's recognition hangs once, the 🎤 button opens the keyboard (whose own dictation
+  // key works) instead. Remembered on this device.
+  const [keyboardMic, setKeyboardMic] = useState(() => {
+    try {
+      return localStorage.getItem(KEYBOARD_MIC_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
+  const [micTip, setMicTip] = useState(false);
+  useEffect(() => {
+    if (dictation.error !== 'stuck') return;
+    setKeyboardMic(true);
+    setMicTip(true);
+    try {
+      localStorage.setItem(KEYBOARD_MIC_KEY, '1');
+    } catch {
+      // Not remembered; it will be detected again next time.
+    }
+  }, [dictation.error]);
+
+  function micTap() {
+    if (keyboardMic) {
+      textarea.current?.focus(); // inside the tap, so iOS opens the keyboard
+      setMicTip(true);
+      return;
+    }
+    if (dictation.listening) dictation.stop();
+    else dictation.start();
+  }
 
   const say = (text: string) => autoRead && speak(text, 'en-US', settings.speech.rate);
 
@@ -168,18 +201,19 @@ function ChatSession({ scenario }: { scenario: Scenario }) {
         </section>
       ) : (
         <div class="chat-input">
-          <textarea class="input" rows={1} value={input} placeholder={dictation.listening ? t('chat.listening') : t('chat.placeholder')}
+          <textarea ref={textarea} class="input" rows={1} value={input} placeholder={dictation.listening ? t('chat.listening') : t('chat.placeholder')}
             lang="en" autocapitalize="sentences" enterkeyhint="send"
             onInput={(e) => setInput(e.currentTarget.value)}
             onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); } }} />
           {dictation.supported && (
-            <button class={`btn icon-btn mic ${dictation.listening ? 'on' : ''}`} onClick={() => (dictation.listening ? dictation.stop() : dictation.start())}
-              aria-label={t('chat.mic')}>🎤</button>
+            <button class={`btn icon-btn mic ${dictation.listening ? 'on' : ''}`} onClick={micTap} aria-label={t('chat.mic')}>🎤</button>
           )}
           <button class="btn primary send" disabled={busy || !input.trim()} onClick={send} aria-label={t('chat.send')}>↑</button>
         </div>
       )}
-      {dictation.error && (
+      {micTip ? (
+        <p class="mic-tip small">{t('chat.micKeyboard')}</p>
+      ) : dictation.error && (
         <p class="muted small">
           {dictation.error === 'no-speech' ? t('chat.micNoSpeech')
             : dictation.error === 'not-allowed' ? t('chat.micDenied')
