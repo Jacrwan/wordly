@@ -22,4 +22,19 @@ The page records what was spoken or played while it was hidden.
 
 - The **word player** and **text reader** (Web Speech) work in the background when switching apps, but **stop when the screen locks**. The player tells the user this.
 - **Podcasts (step 8)** will use Gemini TTS audio files played through `<audio>`, so they keep playing with the screen locked, as the brief expected.
-- **Planned (step 8):** a "play with the screen locked" option for the word player. Each word's segment (word → Korean → definition → synonyms) is generated once with Gemini TTS, cached in IndexedDB, and played as audio files. TTS models have their own free-tier daily limits, so audio is generated per word, once, and only on request.
+- **Word player, lock-screen mode:** 단어 듣기 → **화면 잠금 재생**. Each word's segment (word → Korean → definition → synonyms) is voiced once by Gemini TTS (voice Kore), cut out of a batch of up to 8 words per request, and cached in IndexedDB (`wordClips`). A listening session joins the cached clips into one WAV played by a single `<audio>` element, so it is the same kind of playback that passed test B. When the day's TTS quota runs out before any clip exists, the player switches back to device voices.
+
+## Phone test: lock-screen word player
+
+On the iPhone, in the home-screen app, with a family code set and at least 5 saved words:
+
+1. 더보기 → 단어 듣기 → tap **화면 잠금 재생**. It should say how many words still need AI audio.
+2. Tap **AI 음성 만들기** and keep the screen on. Progress counts up; a few words take about 10–20 s.
+3. Tap ▶. Check the voice reads each word, its Korean meaning, definition and similar words, and the word on screen changes with the audio (not a word early or late).
+4. **Lock the screen** for at least 30 s. Audio must keep playing across several words.
+5. On the lock screen: the title is the current word (Korean meaning underneath). Try ⏭ / ⏮ and pause / play.
+6. Unlock: the screen shows the word that is playing.
+7. Leave the player and open it again (or switch filters and back): it should play at once, with no "AI 음성 만들기" step.
+8. Optional: turn on 반복 (loop) and lock the screen; it should start over after the last word.
+
+Report anything that stops, words that are cut off or include the next word, and whether speed changes sound OK.

@@ -210,7 +210,7 @@ function loadCooldowns(): [string, number][] {
 const OVERLOAD_COOLDOWN_MS = 2 * 60_000;
 const DAILY_COOLDOWN_MS = 6 * 60 * 60_000;
 
-function coolDown(model: string, e: GeminiError): void {
+export function coolDown(model: string, e: GeminiError): void {
   const ms = e.daily ? DAILY_COOLDOWN_MS : e.status === 429 ? Math.max(e.retryAfterMs ?? 60_000, 10_000) : OVERLOAD_COOLDOWN_MS;
   coolUntil.set(model, Date.now() + ms);
   try {
@@ -221,7 +221,7 @@ function coolDown(model: string, e: GeminiError): void {
 }
 
 /** Healthy models first (keeping their order), recently failed ones after. */
-function byHealth(models: string[]): string[] {
+export function byHealth(models: string[]): string[] {
   const now = Date.now();
   const ok = models.filter((m) => (coolUntil.get(m) ?? 0) <= now);
   return [...ok, ...models.filter((m) => !ok.includes(m))];

@@ -213,11 +213,11 @@ export class SpeechQueue {
 }
 
 /** Lock-screen / headphone controls where the platform supports them. */
-export function setMediaSession(title: string, handlers: { play: () => void; pause: () => void; next: () => void; prev: () => void }): void {
+export function setMediaSession(title: string, handlers: { play: () => void; pause: () => void; next: () => void; prev: () => void }, artist = 'Wordly'): void {
   const ms = navigator.mediaSession;
   if (!ms) return;
   try {
-    ms.metadata = new MediaMetadata({ title, artist: 'Wordly' });
+    ms.metadata = new MediaMetadata({ title, artist, album: 'Wordly' });
     ms.setActionHandler('play', handlers.play);
     ms.setActionHandler('pause', handlers.pause);
     ms.setActionHandler('nexttrack', handlers.next);

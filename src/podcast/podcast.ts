@@ -1,4 +1,5 @@
-import { chatModels, connFrom, generateJSON, GeminiError, request, type Conn } from '../ai/gemini';
+import { chatModels, connFrom, generateJSON, GeminiError, type Conn } from '../ai/gemini';
+import { RATE, synthesize, ttsModels, wavBlob } from '../ai/tts';
 import { pickTargets, type Target } from '../chat/chat';
 import { db, type Level, type Podcast, type Settings } from '../db/schema';
 
@@ -27,7 +28,6 @@ export interface Script {
 const MIN_WORDS = 3;
 const MAX_WORDS = 12;
 const CHUNK_CHARS = 1200; // ≈ 80–100 s of speech per TTS request
-const TTS_TIMEOUT_MS = 120_000;
 
 const LEVEL_PROMPT: Record<Level, string> = {
   beginner:
@@ -100,12 +100,6 @@ async function writeScript(conn: Conn, settings: Settings, words: Target[], leve
 
 // ---------------------------------------------------------------- TTS
 
-function ttsModels(settings: Settings): string[] {
-  const avail = settings.models?.available ?? [];
-  const list = [settings.models?.tts, 'gemini-3.8-flash-tts', 'gemini-3.8-flash-lite-tts', 'gemini-3.1-flash-tts-preview'];
-  return [...new Set(list.filter((m): m is string => !!m && avail.includes(m)))];
-}
-
 function chunks(lines: Line[]): number[][] {
   const out: number[][] = [];
   let cur: number[] = [];
@@ -139,43 +133,7 @@ async function speakChunk(conn: Conn, models: string[], lines: Line[]): Promise<
       },
     },
   };
-  let last: unknown;
-  for (const model of models) {
-    try {
-      const res = await request<{ candidates?: { content?: { parts?: { inlineData?: { mimeType: string; data: string } }[] } }[] }>(
-        conn, `models/${model}:generateContent`, { method: 'POST', body: JSON.stringify(body) }, TTS_TIMEOUT_MS);
-      const inline = res.candidates?.[0]?.content?.parts?.find((p) => p.inlineData)?.inlineData;
-      if (!inline) throw new GeminiError('no audio in response', 'http');
-      return pcmFrom(inline.data, inline.mimeType);
-    } catch (e) {
-      last = e;
-      // Try the next TTS model on quota/overload/unavailable; anything else is final.
-      if (!(e instanceof GeminiError) || (e.kind !== 'rate-limit' && e.status !== 404 && e.status !== 400)) throw e;
-    }
-  }
-  throw last ?? new Error('no TTS model');
-}
-
-function pcmFrom(b64: string, mime: string): Int16Array {
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  // WAV responses carry a 44-byte header; raw L16 doesn't.
-  const offset = mime.includes('wav') && bin.startsWith('RIFF') ? 44 : 0;
-  return new Int16Array(bytes.buffer.slice(offset, offset + ((bytes.length - offset) >> 1) * 2));
-}
-
-const RATE = 24000;
-
-function wavBlob(parts: Int16Array[]): Blob {
-  const samples = parts.reduce((n, p) => n + p.length, 0);
-  const header = new DataView(new ArrayBuffer(44));
-  const str = (o: number, s: string) => [...s].forEach((c, i) => header.setUint8(o + i, c.charCodeAt(0)));
-  str(0, 'RIFF'); header.setUint32(4, 36 + samples * 2, true); str(8, 'WAVE'); str(12, 'fmt ');
-  header.setUint32(16, 16, true); header.setUint16(20, 1, true); header.setUint16(22, 1, true);
-  header.setUint32(24, RATE, true); header.setUint32(28, RATE * 2, true); header.setUint16(32, 2, true); header.setUint16(34, 16, true);
-  str(36, 'data'); header.setUint32(40, samples * 2, true);
-  return new Blob([header.buffer, ...parts.map((p) => p.buffer as ArrayBuffer)], { type: 'audio/wav' });
+  return (await synthesize(conn, models, body)).pcm;
 }
 
 // ---------------------------------------------------------------- background job

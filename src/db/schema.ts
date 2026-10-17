@@ -108,6 +108,19 @@ export interface Podcast {
   createdAt: number;
 }
 
+/** One saved word read aloud by Gemini TTS, for the lock-screen player (see speech/clips.ts). */
+export interface WordClip {
+  word: string; // myWords key
+  detail: ClipDetail;
+  text: string; // what was read; a different text (e.g. a refreshed definition) means a new clip
+  voice: string;
+  pcm: Blob; // raw 16-bit 24 kHz mono samples
+  seconds: number;
+  model: string;
+  createdAt: number;
+}
+export type ClipDetail = 'full'; // word → Korean → definition → synonyms
+
 class WordlyDB extends Dexie {
   settings!: Table<Settings, string>;
   dictShards!: Table<DictShard, string>;
@@ -119,6 +132,7 @@ class WordlyDB extends Dexie {
   packs!: Table<Pack, string>;
   chats!: Table<Chat, number>;
   podcasts!: Table<Podcast, number>;
+  wordClips!: Table<WordClip, [string, ClipDetail]>;
 
   constructor() {
     super('wordly');
@@ -134,6 +148,7 @@ class WordlyDB extends Dexie {
       chats: '++id, startedAt',
       podcasts: '++id, createdAt',
     });
+    this.version(2).stores({ wordClips: '[word+detail], word' });
   }
 }
 
