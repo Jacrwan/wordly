@@ -104,7 +104,7 @@ function AiSection() {
         <div class="row">
           {/* Masked text fields avoid iOS offering to save these as passwords. */}
           <input class={`input mono ${showCode ? '' : 'masked'}`} type="text" value={code}
-            autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck={false}
+            placeholder={t('settings.family.placeholder')} autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck={false}
             onInput={(e) => setCode(e.currentTarget.value)} />
           <button class="btn ghost" onClick={() => setShowCode(!showCode)}>
             {showCode ? t('settings.secret.hide') : t('settings.secret.show')}

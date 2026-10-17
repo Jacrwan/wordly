@@ -44,7 +44,8 @@ export default {
 
     const ip = request.headers.get('CF-Connecting-IP') ?? 'unknown';
     const code = request.headers.get('X-Family-Code') ?? '';
-    if (!(await sameSecret(code, env.FAMILY_CODE))) {
+    // Case and surrounding spaces don't matter: "Sunflower " works for "sunflower".
+    if (!(await sameSecret(normalizeCode(code), normalizeCode(env.FAMILY_CODE)))) {
       const limited = env.FAIL_LIMITER && !(await env.FAIL_LIMITER.limit({ key: `fail:${ip}` })).success;
       return limited
         ? error(429, 'RATE_LIMIT', 'Too many attempts. Try again in a minute.', cors)
@@ -92,6 +93,10 @@ function corsHeaders(origin: string | null): Record<string, string> {
 
 function error(status: number, code: string, message: string, cors: Record<string, string>): Response {
   return Response.json({ error: { code, message, status } }, { status, headers: cors });
+}
+
+function normalizeCode(code: string): string {
+  return code.trim().toLowerCase();
 }
 
 // Constant-time comparison; hashing first makes both sides the same length.

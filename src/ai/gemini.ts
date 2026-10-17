@@ -23,11 +23,13 @@ export type GeminiErrorKind =
 export class GeminiError extends Error {
   readonly kind: GeminiErrorKind;
   readonly status?: number;
+  readonly retryAfterMs?: number; // from Google's RetryInfo on 429s
 
-  constructor(message: string, kind: GeminiErrorKind, status?: number) {
+  constructor(message: string, kind: GeminiErrorKind, status?: number, retryAfterMs?: number) {
     super(message);
     this.kind = kind;
     this.status = status;
+    this.retryAfterMs = retryAfterMs;
   }
 }
 
@@ -53,7 +55,9 @@ export async function request<T>(conn: Conn, path: string, init: RequestInit = {
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     const msg: string = body?.error?.message ?? res.statusText;
-    throw new GeminiError(msg, errorKind(conn, res.status, body?.error?.code, msg), res.status);
+    const retry = (body?.error?.details ?? []).find((d: { retryDelay?: string }) => d.retryDelay)?.retryDelay;
+    const retryAfterMs = retry ? Math.ceil(parseFloat(retry) * 1000) : undefined;
+    throw new GeminiError(msg, errorKind(conn, res.status, body?.error?.code, msg), res.status, retryAfterMs);
   }
   return res.json();
 }
@@ -119,6 +123,15 @@ function pickFamily(ids: string[], family: 'flash' | 'pro'): string | null {
   return newest(preview);
 }
 
+/** The fast model plus a lighter one with its own rate limit, for lookups and notes. */
+export function lookupModels(choice: ModelChoice | null): string[] {
+  if (!choice?.lookup) return [];
+  const lite = choice.available.includes('gemini-flash-lite-latest')
+    ? 'gemini-flash-lite-latest'
+    : choice.available.filter((id) => /^gemini-[\d.]+-flash-lite$/.test(id)).sort().pop();
+  return lite ? [choice.lookup, lite] : [choice.lookup];
+}
+
 export function pickModels(models: ModelInfo[]): ModelChoice {
   const generative = models.filter((m) => m.methods.includes('generateContent')).map((m) => m.id);
   const lookup = pickFamily(generative, 'flash');
@@ -134,15 +147,47 @@ export function pickModels(models: ModelInfo[]): ModelChoice {
 }
 
 export interface JsonRequest {
-  model: string;
+  /** Models to try in order; later ones are used when earlier ones are rate-limited. */
+  models: string[];
   system: string;
   prompt: string;
   schema: object; // Gemini responseSchema (OpenAPI subset)
   temperature?: number;
+  /** "low" skips most hidden reasoning: ~3 s instead of ~4+ s for dictionary-style answers. */
+  thinkingLevel?: 'low' | 'high';
+  /** Called when every model is rate-limited and we're waiting to retry. */
+  onWait?: (ms: number) => void;
 }
 
-/** One generateContent call with structured JSON output. */
-export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<T> {
+const MAX_RETRY_WAIT_MS = 30_000;
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * generateContent with structured JSON output. The free tier allows ~5 requests per minute
+ * per model, so a 429 moves on to the next model, and if all are busy we wait once for
+ * the delay Google suggests.
+ */
+export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<{ data: T; model: string }> {
+  const models = [...new Set(req.models.filter(Boolean))];
+  let waited = false;
+  for (;;) {
+    let shortestWait = Infinity;
+    for (const model of models) {
+      try {
+        return { data: await generateOnce<T>(conn, model, req), model };
+      } catch (e) {
+        if (!(e instanceof GeminiError) || e.kind !== 'rate-limit') throw e;
+        shortestWait = Math.min(shortestWait, e.retryAfterMs ?? 60_000);
+        if (model === models[models.length - 1] && (waited || shortestWait > MAX_RETRY_WAIT_MS)) throw e;
+      }
+    }
+    waited = true;
+    req.onWait?.(shortestWait);
+    await sleep(shortestWait + 500);
+  }
+}
+
+async function generateOnce<T>(conn: Conn, model: string, req: JsonRequest, withThinking = true): Promise<T> {
   const body = {
     systemInstruction: { parts: [{ text: req.system }] },
     contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
@@ -150,11 +195,19 @@ export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<T> 
       responseMimeType: 'application/json',
       responseSchema: req.schema,
       temperature: req.temperature ?? 0.4,
+      ...(req.thinkingLevel && withThinking ? { thinkingConfig: { thinkingLevel: req.thinkingLevel } } : {}),
     },
   };
-  const res = await request<{
-    candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[];
-  }>(conn, `models/${req.model}:generateContent`, { method: 'POST', body: JSON.stringify(body) });
+  let res: { candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[] };
+  try {
+    res = await request(conn, `models/${model}:generateContent`, { method: 'POST', body: JSON.stringify(body) });
+  } catch (e) {
+    // Some models don't accept thinking settings; ask again without them.
+    if (withThinking && req.thinkingLevel && e instanceof GeminiError && e.status === 400 && /think/i.test(e.message)) {
+      return generateOnce<T>(conn, model, req, false);
+    }
+    throw e;
+  }
   const cand = res.candidates?.[0];
   const text = (cand?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? '').join('');
   try {

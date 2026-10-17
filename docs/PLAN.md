@@ -26,6 +26,11 @@ This plan covers eight steps, built in order. Each step ends with a **phone chec
   - `tts`: a model whose name contains `tts` and that supports multi-speaker output.
 - Every structured call uses `responseMimeType: "application/json"` with a `responseSchema`, and the result is checked against a local TypeScript schema before it's used.
 
+**Measured 2026-10-17 through the proxy:**
+- `gemini-flash-latest` resolves to `gemini-3.8-flash`; `gemini-pro-latest` is the long-task model; TTS picks `gemini-3.8-flash-tts`.
+- `thinkingLevel: "low"` drops hidden reasoning tokens to 0 and cuts a dictionary call from ~4 s to ~3 s. `"minimal"` is rejected by this model, so calls retry without a thinking setting if a model refuses it.
+- The free tier allows **5 requests per minute per model**, shared across all phones using the key. Lookups fall back to `gemini-flash-lite-latest` (its own quota), then wait once for Google's `retryDelay` (up to 30 s). Turning on billing in AI Studio removes this bottleneck if it becomes a problem.
+
 ---
 
 ## 1. Data model (IndexedDB via Dexie)

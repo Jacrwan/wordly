@@ -1,7 +1,7 @@
 import { aiNeeds } from '../dict/lookup';
 import type { AiFill, DictEntry } from '../dict/types';
 import { db, type Settings } from '../db/schema';
-import { connFrom, generateJSON } from './gemini';
+import { connFrom, generateJSON, lookupModels } from './gemini';
 
 // Gemini fills gaps in the bundled dictionary. Each word is asked about at most once:
 // the answer (even "not a word") is stored in aiEntries and reused forever.
@@ -19,7 +19,7 @@ const FILL_SCHEMA = {
   type: 'OBJECT',
   properties: {
     found: { type: 'BOOLEAN', description: 'false if this is not a real English word or phrase' },
-    word: { ...STR, description: 'correct English spelling of the word or phrase' },
+    word: { ...STR, description: 'correct English spelling; for a misspelling (found=false), the most likely intended word' },
     ipa: { ...STR, description: 'US IPA between slashes, or empty' },
     meanings: {
       type: 'ARRAY',
@@ -58,7 +58,7 @@ function fillPrompt(key: string, entry: DictEntry | null, needs: ReturnType<type
   lines.push('', 'Fill in:');
   if (needs.includes('all')) {
     lines.push(
-      '- found, word, ipa',
+      '- found, word, ipa (if the input is a misspelling, set found=false and word to the intended word, nothing else)',
       '- meanings: the 1–4 most common meanings, each with a short English definition and Korean equivalents',
       '- examples: 3 example sentences with Korean translations',
       '- synonyms: 3–5 common synonyms',
@@ -80,7 +80,12 @@ export async function cachedFill(key: string): Promise<AiFill | null> {
 }
 
 /** The AI fill for a word: from cache, or one Gemini call if the dictionary falls short. */
-export function getAiFill(key: string, entry: DictEntry | null, settings: Settings): Promise<AiFill | null> {
+export function getAiFill(
+  key: string,
+  entry: DictEntry | null,
+  settings: Settings,
+  onWait?: (ms: number) => void,
+): Promise<AiFill | null> {
   let p = inflight.get(key);
   if (!p) {
     p = (async () => {
@@ -89,13 +94,15 @@ export function getAiFill(key: string, entry: DictEntry | null, settings: Settin
       const needs = aiNeeds(entry);
       if (!needs.length) return null;
       const conn = connFrom(settings);
-      const model = settings.models?.lookup;
-      if (!conn || !model) throw new AiUnavailable();
-      const fill = await generateJSON<AiFill>(conn, {
-        model,
+      const models = lookupModels(settings.models);
+      if (!conn || !models.length) throw new AiUnavailable();
+      const { data: fill, model } = await generateJSON<AiFill>(conn, {
+        models,
         system: SYSTEM,
         prompt: fillPrompt(key, entry, needs),
         schema: FILL_SCHEMA,
+        thinkingLevel: 'low',
+        onWait,
       });
       const clean = sanitize(fill, entry !== null, needs);
       await db.aiEntries.put({ word: key, entry: clean, model, createdAt: Date.now() });
@@ -134,28 +141,40 @@ const NOTE_SCHEMA = {
 
 const noteInflight = new Map<string, Promise<string>>();
 
+export interface NoteMeaning {
+  p: string;
+  g: string;
+  ko: string[];
+}
+
 /** Generates the 쉬운 설명 once per word (on first save) and caches it. */
-export function ensureEasyNote(key: string, word: string, koMeanings: string[], gloss: string, settings: Settings): Promise<string> {
+export function ensureEasyNote(key: string, word: string, meanings: NoteMeaning[], settings: Settings): Promise<string> {
   let p = noteInflight.get(key);
   if (!p) {
     p = (async () => {
       const cached = await db.easyNotes.get(key);
       if (cached) return cached.text;
       const conn = connFrom(settings);
-      const model = settings.models?.lookup;
-      if (!conn || !model) throw new AiUnavailable();
-      const { note } = await generateJSON<{ note: string }>(conn, {
-        model,
+      const models = lookupModels(settings.models);
+      if (!conn || !models.length) throw new AiUnavailable();
+      const list = meanings
+        .slice(0, 6)
+        .map((m) => `- (${m.p}) ${m.ko.length ? m.ko.join(', ') + ' — ' : ''}${m.g}`)
+        .join('\n');
+      const { data, model } = await generateJSON<{ note: string }>(conn, {
+        models,
         system:
           'You explain English words to Korean adults (including older learners) in plain, friendly Korean. ' +
           'Use 1–2 short sentences, no romanization, no lists, no greetings.',
         prompt:
-          `단어: ${word}\n뜻: ${koMeanings.join(', ') || '(없음)'}\n영어 정의: ${gloss || '(없음)'}\n\n` +
-          '이 단어의 뉘앙스와 실제로 언제·어떻게 쓰는지 쉬운 한국어로 1~2문장으로 설명해 주세요. ' +
-          '비슷한 한국어 표현과 다른 점이 있으면 짧게 알려 주세요.',
+          `단어: ${word}\n사전의 뜻 (사전 순서이며, 흔한 순서가 아닐 수 있음):\n${list || '(없음)'}\n\n` +
+          '실제 생활에서 가장 흔하게 쓰이는 용법 1~2가지를 중심으로, 이 단어의 뉘앙스와 언제·어떻게 쓰는지 ' +
+          '쉬운 한국어 1~2문장으로 설명해 주세요. 자주 함께 쓰는 표현(예: apply for)이 있으면 짧게 넣어 주세요.',
         schema: NOTE_SCHEMA,
         temperature: 0.5,
+        thinkingLevel: 'low',
       });
+      const note = data.note;
       const text = note.trim();
       await db.easyNotes.put({ word: key, text, model, createdAt: Date.now() });
       return text;

@@ -16,7 +16,7 @@ const FIRST_MEANINGS = 5;
 
 export function WordScreen({ query }: { query: string }) {
   const { t } = useApp();
-  const { state, ai, retry } = useWord(query);
+  const { state, ai, aiError, retry } = useWord(query);
 
   return (
     <Page title={state.status === 'ready' ? state.view.word : t('word.title')} onBack={() => back('search')}>
@@ -33,6 +33,7 @@ export function WordScreen({ query }: { query: string }) {
           ) : state.aiError ? (
             <>
               <p class="muted small">{t('word.aiError')}</p>
+              {aiError && <p class="muted tiny">{aiError === 'busy' ? t('word.aiBusy') : aiError}</p>}
               <button class="btn" onClick={retry}>{t('word.retry')}</button>
             </>
           ) : (
@@ -40,7 +41,7 @@ export function WordScreen({ query }: { query: string }) {
           )}
         </div>
       )}
-      {state.status === 'ready' && <WordCard view={state.view} via={state.via} ai={ai} retry={retry} />}
+      {state.status === 'ready' && <WordCard view={state.view} via={state.via} ai={ai} aiError={aiError} retry={retry} />}
     </Page>
   );
 }
@@ -50,7 +51,13 @@ function AiTag() {
   return <span class="ai-tag" title={t('word.aiTagTitle')} aria-label={t('word.aiTagTitle')}>{t('word.aiTag')}</span>;
 }
 
-export function WordCard({ view, via, ai, retry }: { view: WordView; via?: string; ai: AiState; retry: () => void }) {
+export function WordCard({ view, via, ai, aiError, retry }: {
+  view: WordView;
+  via?: string;
+  ai: AiState;
+  aiError?: string;
+  retry: () => void;
+}) {
   const { t, settings } = useApp();
   const lang = settings.uiLang;
   const [allMeanings, setAllMeanings] = useState(false);
@@ -118,8 +125,12 @@ export function WordCard({ view, via, ai, retry }: { view: WordView; via?: strin
       <section class="card">
         <h3>{t('word.examples')}</h3>
         {ai === 'loading' && <p class="muted pulse">{t('word.aiLoading')}</p>}
+        {ai === 'waiting' && <p class="muted pulse">{t('word.aiWaiting')}</p>}
         {ai === 'error' && (
-          <p class="muted small">{t('word.aiError')} <button class="btn link" onClick={retry}>{t('word.retry')}</button></p>
+          <p class="muted small">
+            {t('word.aiError')} <button class="btn link" onClick={retry}>{t('word.retry')}</button>
+            {aiError && <span class="tiny block">{aiError === 'busy' ? t('word.aiBusy') : aiError}</span>}
+          </p>
         )}
         {ai === 'unavailable' && <p class="muted small">{t('word.aiUnavailable')}</p>}
         {view.examples.length === 0 && ai === 'idle' && <p class="muted">{t('word.noExamples')}</p>}
@@ -152,7 +163,7 @@ function EasyNote({ view }: { view: WordView }) {
   useEffect(() => {
     let live = true;
     setError(null);
-    ensureEasyNote(view.key, view.word, viewKo(view), view.meanings[0]?.g ?? '', settings).catch(
+    ensureEasyNote(view.key, view.word, view.meanings, settings).catch(
       (e) => live && setError(e instanceof AiUnavailable ? 'unavailable' : 'failed'),
     );
     return () => {

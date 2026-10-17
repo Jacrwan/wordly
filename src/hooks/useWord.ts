@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'preact/hooks';
 import { AiUnavailable, cachedFill, getAiFill } from '../ai/dictionary';
+import { GeminiError } from '../ai/gemini';
 import { aiNeeds, buildView, findEntry, normalize } from '../dict/lookup';
 import type { AiFill, DictEntry, WordView } from '../dict/types';
 import { useApp } from '../state';
@@ -11,13 +12,14 @@ export type WordState =
   | { status: 'notFound'; suggestion?: string; aiUnavailable?: boolean; aiError?: boolean }
   | { status: 'ready'; view: WordView; via?: string };
 
-export type AiState = 'idle' | 'loading' | 'error' | 'unavailable';
+export type AiState = 'idle' | 'loading' | 'waiting' | 'error' | 'unavailable';
 
 /** Loads a word: the dictionary entry right away, then (once, cached) Gemini's gap-fill. */
-export function useWord(query: string): { state: WordState; ai: AiState; retry: () => void } {
+export function useWord(query: string): { state: WordState; ai: AiState; aiError: string; retry: () => void } {
   const { settings } = useApp();
   const [state, setState] = useState<WordState>({ status: 'loading' });
   const [ai, setAi] = useState<AiState>('idle');
+  const [aiError, setAiError] = useState('');
   const [attempt, setAttempt] = useState(0);
 
   useEffect(() => {
@@ -51,13 +53,15 @@ export function useWord(query: string): { state: WordState; ai: AiState; retry: 
       if (!entry) set({ status: 'aiSearching' });
       else live && setAi('loading');
       try {
-        const fill = await getAiFill(key, entry, settings);
+        const fill = await getAiFill(key, entry, settings, () => live && entry && setAi('waiting'));
         if (!live) return;
         setAi('idle');
         show(fill);
       } catch (e) {
         if (!live) return;
         const unavailable = e instanceof AiUnavailable;
+        // "busy" is shown as a friendly rate-limit message; other errors show their text.
+        setAiError(unavailable ? '' : e instanceof GeminiError && e.kind === 'rate-limit' ? 'busy' : (e as Error).message);
         if (entry) setAi(unavailable ? 'unavailable' : 'error');
         else set({ status: 'notFound', aiUnavailable: unavailable, aiError: !unavailable });
         if (!unavailable) console.warn('AI fill failed', e);
@@ -70,5 +74,5 @@ export function useWord(query: string): { state: WordState; ai: AiState; retry: 
   }, [query, attempt, settings.familyCode, settings.apiKey, settings.models?.lookup]);
 
   const retry = useCallback(() => setAttempt((n) => n + 1), []);
-  return { state, ai, retry };
+  return { state, ai, aiError, retry };
 }

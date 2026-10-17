@@ -342,3 +342,5 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .pulse { animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .pulse { animation: none; } }
+.tiny { font-size: 0.75rem; }
+.block { display: block; }
