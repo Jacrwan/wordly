@@ -40,8 +40,11 @@ SSL = ssl.create_default_context(cafile=certifi.where())
 
 PROXY = 'https://wordly-proxy.jacrwan.workers.dev'
 GOOGLE = 'https://generativelanguage.googleapis.com'
-# Flash-Lite was tried as a second model and accepted noticeably worse candidates, so Flash only by default.
-DEFAULT_MODELS = ['gemini-flash-latest']
+# Full Flash models only, newest first. Flash-Lite accepted noticeably worse candidates.
+# On the free tier each model has its own small daily allowance, so the run moves down
+# this list as models run out, and picks up again the next day.
+DEFAULT_MODELS = ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash',
+                  'gemini-3-flash-preview', 'gemini-2.5-flash']
 RPM_PER_MODEL = 5  # free tier
 MAX_CANDIDATES = 10
 # Subtitle lines that make poor dictionary examples: fragments, stutters, filler openers, oaths.
@@ -109,9 +112,9 @@ def log(*a):
 # ---------------------------------------------------------------- Gemini over HTTP (stdlib only)
 
 class RateLimited(Exception):
-    def __init__(self, retry_s: float, daily: bool):
+    def __init__(self, retry_s: float, daily: bool, limit: str = ''):
         super().__init__(f'rate limited (retry {retry_s:.0f}s, daily={daily})')
-        self.retry_s, self.daily = retry_s, daily
+        self.retry_s, self.daily, self.limit = retry_s, daily, limit
 
 
 class Client:
@@ -137,8 +140,9 @@ class Client:
             if e.code == 429:
                 details = err.get('details', [])
                 retry = next((d.get('retryDelay') for d in details if d.get('retryDelay')), '60s')
-                quota_ids = [v.get('quotaId', '') for d in details for v in d.get('violations', [])]
-                raise RateLimited(float(retry.rstrip('s') or 60), any('PerDay' in q for q in quota_ids))
+                violations = [v for d in details for v in d.get('violations', [])]
+                daily = [v for v in violations if 'PerDay' in v.get('quotaId', '')]
+                raise RateLimited(float(retry.rstrip('s') or 60), bool(daily), daily[0].get('quotaValue', '') if daily else '')
             if e.code == 401 and err.get('code') == 'FAMILY_CODE':
                 sys.exit('Wrong family code.')
             raise RuntimeError(f'HTTP {e.code}: {err.get("message", "")[:300]}')
@@ -189,7 +193,8 @@ class Limiter:
             with self.lock:
                 live = [m for m in self.models if m not in self.daily_out]
                 if not live:
-                    raise SystemExit('Daily free quota used up on all models. Run again tomorrow to resume.')
+                    raise SystemExit('Daily free quota used up on all models. Run `npm run review` again tomorrow '
+                                     '(quotas reset at midnight US Pacific time, about 4–5 pm in Korea).')
                 now = time.time()
                 for m in live:
                     q = self.sent[m]
@@ -203,8 +208,11 @@ class Limiter:
     def limited(self, model: str, e: RateLimited):
         with self.lock:
             if e.daily:
+                if model not in self.daily_out:
+                    log(f'  {model}: daily quota used up' + (f' (limit {e.limit} requests/day)' if e.limit else '') +
+                        (f'; continuing with {", ".join(m for m in self.models if m not in self.daily_out and m != model)}'
+                         if len(self.daily_out) + 1 < len(self.models) else ''))
                 self.daily_out.add(model)
-                log(f'  {model}: daily quota used up')
             else:
                 self.blocked_until[model] = time.time() + e.retry_s + 1
 
@@ -309,7 +317,7 @@ def main():
     ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--limit', type=int, default=10_000, help='review the N most frequent entries')
     ap.add_argument('--words', help='comma-separated keys to review instead (pilot)')
-    ap.add_argument('--batch', type=int, default=20)
+    ap.add_argument('--batch', type=int, default=40)
     ap.add_argument('--parallel', type=int, default=2, help='concurrent requests per model')
     ap.add_argument('--then-limit', type=int, help='after the --words pilot, pause, then review the top N words')
     ap.add_argument('--models', default=','.join(DEFAULT_MODELS), help='comma-separated models to use, in order')

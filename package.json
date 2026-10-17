@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "icons": "pwa-assets-generator"
+    "icons": "pwa-assets-generator",
+    "review": ".venv/bin/python -I scripts/review_examples.py --dict public/data/dict --subs data-raw/cache/subs-v1.pickle.gz --out data-raw/cache/review-v1.jsonl --limit 10000"
   },
   "dependencies": {
     "dexie": "4.4.6",
