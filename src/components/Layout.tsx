@@ -12,8 +12,12 @@ const tabs: { route: Route; icon: IconName; label: 'tab.search' | 'tab.words' | 
   { route: 'more', icon: 'more', label: 'tab.more' },
 ];
 
-// Sub-pages reached from "More" keep the More tab highlighted.
-const tabFor = (r: Route): Route => (tabs.some((t) => t.route === r) ? r : 'more');
+// Sub-pages keep their tab highlighted: word pages stay under the tab they were opened from.
+let lastTab: Route = 'search';
+const tabFor = (r: Route): Route => {
+  if (tabs.some((t) => t.route === r)) return (lastTab = r);
+  return r === 'word' ? lastTab : 'more';
+};
 
 export function TabBar({ route }: { route: Route }) {
   const { t } = useApp();
@@ -31,7 +35,12 @@ export function TabBar({ route }: { route: Route }) {
   );
 }
 
-export function Page({ title, back, children }: { title: string; back?: Route; children: ComponentChildren }) {
+export function Page({ title, back, onBack, children }: {
+  title: string;
+  back?: Route;
+  onBack?: () => void;
+  children: ComponentChildren;
+}) {
   const { t } = useApp();
   return (
     <>
@@ -40,6 +49,11 @@ export function Page({ title, back, children }: { title: string; back?: Route; c
           <a class="back" href={href(back)} aria-label={t('common.back')}>
             <Icon name="back" />
           </a>
+        )}
+        {onBack && (
+          <button class="back" onClick={onBack} aria-label={t('common.back')}>
+            <Icon name="back" />
+          </button>
         )}
         <h1>{title}</h1>
       </header>

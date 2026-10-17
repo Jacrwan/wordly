@@ -7,16 +7,18 @@ import { Placeholder } from './screens/Placeholder';
 import { Review } from './screens/Review';
 import { Search } from './screens/Search';
 import { SettingsScreen } from './screens/Settings';
+import { WordScreen } from './screens/Word';
 import { Words } from './screens/Words';
 
 export function App() {
-  const route = useRoute();
+  const { name: route, param } = useRoute();
   const scroller = useRef<HTMLDivElement>(null);
-  useEffect(() => scroller.current?.scrollTo(0, 0), [route]);
+  useEffect(() => scroller.current?.scrollTo(0, 0), [route, param]);
   return (
     <div class="app">
       <div class="scroller" ref={scroller}>
         {route === 'search' && <Search />}
+        {route === 'word' && param && <WordScreen key={param} query={param} />}
         {route === 'words' && <Words />}
         {route === 'review' && <Review />}
         {route === 'more' && <More />}

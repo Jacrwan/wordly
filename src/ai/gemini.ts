@@ -132,3 +132,34 @@ export function pickModels(models: ModelInfo[]): ModelChoice {
     checkedAt: Date.now(),
   };
 }
+
+export interface JsonRequest {
+  model: string;
+  system: string;
+  prompt: string;
+  schema: object; // Gemini responseSchema (OpenAPI subset)
+  temperature?: number;
+}
+
+/** One generateContent call with structured JSON output. */
+export async function generateJSON<T>(conn: Conn, req: JsonRequest): Promise<T> {
+  const body = {
+    systemInstruction: { parts: [{ text: req.system }] },
+    contents: [{ role: 'user', parts: [{ text: req.prompt }] }],
+    generationConfig: {
+      responseMimeType: 'application/json',
+      responseSchema: req.schema,
+      temperature: req.temperature ?? 0.4,
+    },
+  };
+  const res = await request<{
+    candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] }; finishReason?: string }[];
+  }>(conn, `models/${req.model}:generateContent`, { method: 'POST', body: JSON.stringify(body) });
+  const cand = res.candidates?.[0];
+  const text = (cand?.content?.parts ?? []).filter((p) => !p.thought).map((p) => p.text ?? '').join('');
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new GeminiError(`Unreadable response (${cand?.finishReason ?? 'no candidates'})`, 'http');
+  }
+}

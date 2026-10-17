@@ -52,7 +52,10 @@ export interface EasyNote {
 }
 
 export interface MyWord {
-  word: string;
+  word: string; // dictionary key (lowercase)
+  display: string; // spelling to show
+  ko: string[]; // Korean meanings snapshot for lists
+  rank: number | null;
   status: WordStatus;
   addedAt: number;
   source: string;

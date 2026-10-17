@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'preact/hooks';
 import { connFrom, GeminiError, listModels, pickModels } from '../ai/gemini';
 import { Page } from '../components/Layout';
 import { createBackup, deliverFile, parseBackup, restoreBackup } from '../db/backup';
+import { downloadAll, offlineStatus, type OfflineStatus } from '../dict/store';
 import type { Level, Profile, Settings, UiLang } from '../db/schema';
 import type { StringKey } from '../i18n';
 import { useApp } from '../state';
@@ -21,6 +22,7 @@ export function SettingsScreen() {
       <AiSection />
       <ProfileSection />
       <StudySection />
+      <OfflineSection />
       <StorageSection />
       <BackupSection />
     </Page>
@@ -252,6 +254,42 @@ function StorageSection() {
       <h2>{t('settings.storage')}</h2>
       <p>{t('settings.storage.used', { used: fmtBytes(info.used), quota: fmtBytes(info.quota) })}</p>
       <p class="muted small">{info.persisted ? t('settings.storage.persisted') : t('settings.storage.notPersisted')}</p>
+    </section>
+  );
+}
+
+function OfflineSection() {
+  const { t } = useApp();
+  const [info, setInfo] = useState<OfflineStatus | null>(null);
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  const [result, setResult] = useState<Status>(null);
+  useEffect(() => {
+    offlineStatus().then(setInfo);
+  }, []);
+
+  async function download() {
+    setResult(null);
+    const ok = await downloadAll((done, total) => setProgress({ done, total }));
+    setProgress(null);
+    setInfo(await offlineStatus());
+    setResult(ok ? { kind: 'ok', text: t('settings.offline.done') } : { kind: 'error', text: t('settings.offline.failed') });
+  }
+
+  const complete = info && info.stored >= info.total;
+  return (
+    <section class="card">
+      <h2>{t('settings.offline')}</h2>
+      <p class="muted small">{t('settings.offline.help')}</p>
+      {info && <p class="small">{t('settings.offline.status', { stored: info.stored, total: info.total })}</p>}
+      {progress ? (
+        <>
+          <progress class="progress" max={progress.total} value={progress.done} />
+          <p class="small muted">{t('settings.offline.progress', progress)}</p>
+        </>
+      ) : (
+        !complete && <button class="btn block" onClick={download}>{t('settings.offline.download')}</button>
+      )}
+      {result && <p class={`status ${result.kind}`} role="status">{result.text}</p>}
     </section>
   );
 }
