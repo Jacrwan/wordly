@@ -1,5 +1,6 @@
 import { chatModels, connFrom, generateJSON, GeminiError, type Conn } from '../ai/gemini';
 import { RATE, synthesize, ttsModels, wavBlob } from '../ai/tts';
+import { speechSpan } from '../speech/edges';
 import { pickTargets, type Target } from '../chat/chat';
 import { db, type Level, type Podcast, type Settings } from '../db/schema';
 
@@ -180,7 +181,8 @@ export async function createEpisode(settings: Settings, level: Level): Promise<v
       if (fallback) break;
       set({ status: 'audio', done: i, total: groups.length });
       try {
-        const audio = await speakChunk(conn, models, g.map((j) => lines[j]));
+        const raw = await speakChunk(conn, models, g.map((j) => lines[j]));
+        const audio = raw.subarray(...speechSpan(raw)); // drop static at the chunk's edges
         pcm.push(audio);
         // Line timing within a chunk: proportional to text length (good enough to follow along).
         const secs = audio.length / RATE;

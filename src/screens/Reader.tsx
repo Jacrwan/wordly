@@ -116,7 +116,8 @@ function ReaderAudio({ sentences, autoMake, onWord, onEdit }: {
     const clips = await cachedRuns(runs);
     if (!alive.current) return null;
     const missing = runs.filter((r) => !clips.has(r.key));
-    const session = buildReaderSession(runs, clips);
+    const session = await buildReaderSession(runs, clips);
+    if (!alive.current) return null;
     if (session && (!missing.length || allowPartial)) setPrep({ phase: 'ready', session, partial: missing.length > 0 });
     else setPrep({ phase: 'need', missing });
     return missing;
