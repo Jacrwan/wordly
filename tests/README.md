@@ -8,7 +8,7 @@ For browser integration checks, start `npm run dev -- --port 5175 --strictPort`,
 2. Play, next/previous, choose a word, and switch All/Learning/Due/Mastered.
 3. Reload: expect zero requests and immediately available playback.
 4. Use the harness's “Test without credentials” button: cached audio must still play.
-5. Use the partial/empty quota buttons, then Make AI audio: expect cached-only playback or device-voice fallback respectively.
+5. Use the partial/empty quota buttons, then Make AI audio: expect cached-only playback, or a "used up, try tomorrow" message when nothing is cached (there is no device-voice fallback any more).
 6. Observe the current word and Media Session title; they should agree during playback.
 
 Real Gemini and physical iPhone testing are separate; see `docs/ios-audio-findings.md`.

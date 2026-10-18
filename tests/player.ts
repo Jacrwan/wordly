@@ -69,7 +69,6 @@ async function main() {
     await db.wordClips.bulkDelete(items.map(it=>[it.key,'full']));
   }
   requests=0;
-  localStorage.setItem('wordly.playerMode','audio');
   location.hash='/player';
   await import('../src/main');
   setInterval(async()=>{
@@ -80,7 +79,7 @@ async function main() {
   for(const [label,fn] of [
     ['Test without credentials',async()=>{await db.settings.update('app',{familyCode:'',models:null});location.reload();}],
     ['Test partial quota',async()=>{await db.wordClips.delete(['run','full']);await db.settings.update('app',{familyCode:conn.code,models:{lookup:model,long:model,tts:model,available:[model],checkedAt:Date.now()}});sessionStorage.setItem('quota-test','yes');location.reload();}],
-    ['Test empty quota fallback',async()=>{await db.wordClips.bulkDelete(items.map(it=>[it.key,'full']));await db.settings.update('app',{familyCode:conn.code,models:{lookup:model,long:model,tts:model,available:[model],checkedAt:Date.now()}});sessionStorage.setItem('quota-test','yes');location.reload();}],
+    ['Test empty quota',async()=>{await db.wordClips.bulkDelete(items.map(it=>[it.key,'full']));await db.settings.update('app',{familyCode:conn.code,models:{lookup:model,long:model,tts:model,available:[model],checkedAt:Date.now()}});sessionStorage.setItem('quota-test','yes');location.reload();}],
   ] as const){const b=document.createElement('button');b.textContent=label;b.onclick=fn;controls.append(b);}
   output.after(controls);
 }

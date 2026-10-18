@@ -386,7 +386,6 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .playlist li.current { background: var(--accent-soft); }
 .pl-row { all: unset; box-sizing: border-box; display: flex; width: 100%; min-height: 60px; padding: 8px 16px; cursor: pointer; }
 .pl-row:disabled { opacity: 0.45; cursor: default; }
-.player-mode { margin-bottom: 12px; }
 .audio-prep { display: grid; gap: 8px; }
 .audio-prep p { margin: 0; }
 
@@ -395,6 +394,7 @@ a.chip { display: inline-flex; align-items: center; text-decoration: none; }
 .reader-text { font-size: 1.15rem; line-height: 1.9; }
 .sentence { border-radius: 6px; padding: 2px 0; transition: background 0.2s; }
 .sentence.current { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.sentence.no-audio { opacity: 0.5; }
 .tap-word { all: unset; cursor: pointer; border-bottom: 1px dotted color-mix(in srgb, var(--muted) 60%, transparent); }
 .tap-word:active { color: var(--accent); }
 
