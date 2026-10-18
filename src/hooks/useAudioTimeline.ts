@@ -58,6 +58,32 @@ export function useAudioTimeline(tl: Timeline, opts: TimelineOptions) {
   };
   const next = () => seekTo(posAt(el.currentTime) + 1);
 
+  // Stop-after-each: timeupdate fires only every ~250 ms, which overshoots a part's end into the
+  // next part (heard as a clipped burst on every loop), so a timer aims at the end itself and
+  // timeupdate is only the fallback.
+  const stopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const arm = () => {
+    if (stopTimer.current) clearTimeout(stopTimer.current);
+    stopTimer.current = null;
+    const end = tl.ends?.[posRef.current];
+    if (!o.current.stopAfterEach || el.paused || end === undefined) return;
+    const ms = ((end - el.currentTime) / (el.playbackRate || 1)) * 1000;
+    stopTimer.current = setTimeout(endReached, Math.max(0, ms));
+  };
+  /** True when the current part has ended (and playback was stopped or looped). */
+  const endReached = (): boolean => {
+    const p = posRef.current;
+    const end = tl.ends?.[p];
+    if (!o.current.stopAfterEach || end === undefined || el.currentTime < end - 0.03) {
+      arm();
+      return false;
+    }
+    // Stay on the finished part: play repeats it, ⏭ moves on.
+    if (!o.current.loop) el.pause();
+    el.currentTime = p === 0 ? 0 : tl.starts[p];
+    return true;
+  };
+
   useEffect(() => {
     const url = URL.createObjectURL(tl.audio);
     el.src = url;
@@ -65,18 +91,16 @@ export function useAudioTimeline(tl: Timeline, opts: TimelineOptions) {
     moveTo(0);
     el.onerror = () => setPlayError(true);
     el.ontimeupdate = () => {
-      const p = posRef.current;
-      const end = tl.ends?.[p];
-      if (o.current.stopAfterEach && end !== undefined && el.currentTime >= end) {
-        // Stay on the finished part: play repeats it, ⏭ moves on.
-        el.currentTime = p === 0 ? 0 : tl.starts[p];
-        if (!o.current.loop) el.pause();
-        return;
-      }
+      if (endReached()) return;
       const at = posAt(el.currentTime);
-      if (at !== p) moveTo(at);
+      if (at !== posRef.current) {
+        moveTo(at);
+        arm();
+      }
     };
+    el.onseeked = el.onratechange = arm;
     el.onplay = () => {
+      arm();
       setPlaying(true);
       if (navigator.mediaSession) navigator.mediaSession.playbackState = 'playing';
     };
@@ -87,11 +111,12 @@ export function useAudioTimeline(tl: Timeline, opts: TimelineOptions) {
     // Rate resets when a new file loads in some browsers.
     el.onloadedmetadata = () => (el.playbackRate = o.current.rate);
     return () => {
+      if (stopTimer.current) clearTimeout(stopTimer.current);
       el.pause();
       el.removeAttribute('src');
       el.load();
       URL.revokeObjectURL(url);
-      el.ontimeupdate = el.onplay = el.onpause = el.onended = el.onloadedmetadata = el.onerror = null;
+      el.ontimeupdate = el.onplay = el.onpause = el.onended = el.onloadedmetadata = el.onerror = el.onseeked = el.onratechange = null;
       if (navigator.mediaSession) {
         navigator.mediaSession.playbackState = 'none';
         navigator.mediaSession.metadata = null;
@@ -109,6 +134,7 @@ export function useAudioTimeline(tl: Timeline, opts: TimelineOptions) {
   // With stop-after-each, looping repeats one part (handled above), not the whole file.
   useEffect(() => {
     el.loop = opts.loop && !opts.stopAfterEach;
+    arm();
   }, [opts.loop, opts.stopAfterEach]);
 
   useEffect(() => {
