@@ -1,8 +1,11 @@
-import { Fragment, type ComponentChildren } from 'preact';
+import { Fragment, type ComponentChildren, type JSX } from 'preact';
 import { createPortal } from 'preact/compat';
-import { useEffect, useMemo, useState } from 'preact/hooks';
+import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { connFrom } from '../ai/gemini';
+import { ttsModels } from '../ai/tts';
 import { Page } from '../components/Layout';
-import { SpeechQueue, type Lang, type QueueState, type Segment } from '../speech/engine';
+import { useAudioTimeline } from '../hooks/useAudioTimeline';
+import { buildReaderSession, cachedRuns, makeRuns, readerRuns, type ReaderSession, type Run } from '../speech/readerAudio';
 import { useApp } from '../state';
 import { WordPanel } from './Word';
 import { SpeedLoop, Transport } from './Player';
@@ -41,52 +44,23 @@ export function splitSentences(text: string): { text: string; paragraphStart: bo
   return out;
 }
 
-const langOf = (s: string): Lang => ((s.match(/[가-힣]/g)?.length ?? 0) > s.length * 0.3 ? 'ko-KR' : 'en-US');
 const WORD = /([A-Za-z]+(?:['’-][A-Za-z]+)*)/;
 
 type Mode = 'continuous' | 'sentence';
 
 export function Reader() {
-  const { t, settings, update } = useApp();
+  const { t } = useApp();
   const [text, setText] = useState(loadDraft);
   const [editing, setEditing] = useState(() => !loadDraft());
-  const [mode, setMode] = useState<Mode>('continuous');
-  const [rate, setRate] = useState(settings.speech.rate);
-  const [loop, setLoop] = useState(false);
+  // Set when the user taps 읽기, so voicing starts at once (opening the screen alone spends nothing).
+  const [autoMake, setAutoMake] = useState(false);
   const [lookup, setLookup] = useState<string | null>(null);
-  const queue = useMemo(() => new SpeechQueue(), []);
-  const [st, setSt] = useState<QueueState>(queue.state);
   const sentences = useMemo(() => splitSentences(text), [text]);
-
-  useEffect(() => {
-    queue.onChange = setSt;
-    return () => queue.stop();
-  }, []);
-
-  useEffect(() => {
-    if (editing) return queue.stop();
-    const segs: Segment[] = [];
-    sentences.forEach((s, g) => {
-      segs.push({ kind: 'say', text: s.text, lang: langOf(s.text), group: g });
-      segs.push({ kind: 'pause', ms: s.paragraphStart && g > 0 ? 500 : 250, group: g });
-    });
-    queue.load(segs);
-  }, [sentences, editing]);
-
-  useEffect(() => {
-    queue.rate = rate;
-    queue.loop = loop;
-    queue.stopAfterGroup = mode === 'sentence';
-  }, [rate, loop, mode]);
-
-  function openWord(w: string) {
-    queue.pause();
-    setLookup(w.replace(/[’]/g, "'"));
-  }
 
   function done() {
     saveDraft(text);
     setEditing(false);
+    setAutoMake(true);
   }
 
   return (
@@ -101,33 +75,8 @@ export function Reader() {
           </div>
         </section>
       ) : (
-        <>
-          <div class="segmented reader-mode">
-            {(['continuous', 'sentence'] as Mode[]).map((m) => (
-              <button key={m} class={mode === m ? 'on' : ''} aria-pressed={mode === m} onClick={() => setMode(m)}>
-                {m === 'continuous' ? t('reader.continuous') : t('reader.sentence')}
-              </button>
-            ))}
-          </div>
-
-          <section class="card reader-text" lang="en">
-            {sentences.map((s, i) => (
-              <Fragment key={i}>
-                {s.paragraphStart && i > 0 && <br />}
-                {/* Tapping a sentence (not a word) moves playback there. */}
-                <span class={`sentence ${i === st.group && (st.playing || mode === 'sentence') ? 'current' : ''}`}
-                  onClick={() => queue.jumpToGroup(i)}>
-                  {tokens(s.text, openWord)}{' '}
-                </span>
-              </Fragment>
-            ))}
-          </section>
-          <p class="muted tiny center">{t('reader.tapHint')}</p>
-
-          <Transport playing={st.playing} onPrev={() => queue.prevGroup()} onToggle={() => queue.toggle()} onNext={() => queue.nextGroup()} />
-          <SpeedLoop rate={rate} onRate={(r) => { setRate(r); update((s) => ({ speech: { ...s.speech, rate: r } })); }} loop={loop} onLoop={setLoop} />
-          <button class="btn ghost block" onClick={() => { queue.stop(); setEditing(true); }}>{t('reader.edit')}</button>
-        </>
+        <ReaderAudio key={text} sentences={sentences} autoMake={autoMake} onWord={(w) => setLookup(w.replace(/[’]/g, "'"))}
+          onEdit={() => { setAutoMake(false); setEditing(true); }} />
       )}
 
       {lookup && (
@@ -136,6 +85,163 @@ export function Reader() {
         </Sheet>
       )}
     </Page>
+  );
+}
+
+type Prep =
+  | { phase: 'checking' }
+  | { phase: 'need'; missing: Run[] }
+  | { phase: 'making'; done: number; total: number; waitMs?: number }
+  | { phase: 'ready'; session: ReaderSession; partial: boolean };
+
+/** Voices the text with Gemini TTS (cached), then plays it as one audio file. */
+function ReaderAudio({ sentences, autoMake, onWord, onEdit }: {
+  sentences: { text: string; paragraphStart: boolean }[];
+  autoMake: boolean;
+  onWord: (w: string) => void;
+  onEdit: () => void;
+}) {
+  const { t, settings } = useApp();
+  const [prep, setPrep] = useState<Prep>({ phase: 'checking' });
+  const [error, setError] = useState('');
+  const conn = connFrom(settings);
+  const models = ttsModels(settings);
+  const canMake = !!conn && models.length > 0;
+  const texts = useMemo(() => sentences.map((s) => s.text), [sentences]);
+  const cancel = useRef<AbortController | null>(null);
+  const alive = useRef(true);
+
+  const check = async (allowPartial = false) => {
+    const runs = await readerRuns(texts);
+    const clips = await cachedRuns(runs);
+    if (!alive.current) return null;
+    const missing = runs.filter((r) => !clips.has(r.key));
+    const session = buildReaderSession(runs, clips);
+    if (session && (!missing.length || allowPartial)) setPrep({ phase: 'ready', session, partial: missing.length > 0 });
+    else setPrep({ phase: 'need', missing });
+    return missing;
+  };
+
+  const make = async (missing: Run[]) => {
+    if (!conn || !models.length) return;
+    const ctl = new AbortController();
+    cancel.current = ctl;
+    setError('');
+    setPrep({ phase: 'making', done: 0, total: missing.length });
+    const res = await makeRuns(conn, models, texts, missing, (p) => alive.current && setPrep({ phase: 'making', ...p }), ctl.signal);
+    if (ctl.signal.aborted || !alive.current) return;
+    if (res.stopped === 'quota') setError(t(res.made || missing.length < (await readerRuns(texts)).length ? 'reader.audio.quota' : 'player.audio.quotaNone'));
+    if (res.stopped === 'error') {
+      console.warn('reader audio failed', res.error);
+      setError(t('player.audio.error'));
+    }
+    check(true);
+  };
+
+  useEffect(() => {
+    alive.current = true;
+    check()
+      .then((missing) => {
+        if (missing?.length && autoMake && canMake) make(missing);
+      })
+      .catch(() => alive.current && setError(t('player.audio.error')));
+    return () => { alive.current = false; cancel.current?.abort(); };
+  }, []);
+
+  const textCard = (current: number, onSentence?: (i: number) => void, has?: Set<number>) => (
+    <section class="card reader-text" lang="en">
+      {sentences.map((s, i) => (
+        <Fragment key={i}>
+          {s.paragraphStart && i > 0 && <br />}
+          {/* Tapping a sentence (not a word) moves playback there. */}
+          <span class={`sentence ${i === current ? 'current' : ''} ${has && !has.has(i) ? 'no-audio' : ''}`}
+            onClick={() => onSentence?.(i)}>
+            {tokens(s.text, onWord)}{' '}
+          </span>
+        </Fragment>
+      ))}
+    </section>
+  );
+
+  if (prep.phase === 'ready') {
+    return (
+      <>
+        {error && <p class="status error small">{error}</p>}
+        <ReaderPlayer session={prep.session} sentences={texts} textCard={textCard} />
+        {prep.partial && canMake && (
+          <button class="btn ghost block" onClick={() => check().then((m) => { if (m?.length) make(m); })}>{t('reader.audio.makeRest')}</button>
+        )}
+        <button class="btn ghost block" onClick={onEdit}>{t('reader.edit')}</button>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <section class="card audio-prep">
+        {prep.phase === 'checking' ? (
+          <p class="muted center">{t('word.loading')}</p>
+        ) : prep.phase === 'making' ? (
+          <>
+            <progress class="progress" max={prep.total} value={prep.done} />
+            <p class="small">{t('reader.audio.making', { done: prep.done, total: prep.total })}</p>
+            <p class="muted tiny">{prep.waitMs ? t('player.audio.waiting', { s: Math.ceil(prep.waitMs / 1000) }) : t('player.audio.keepOpen')}</p>
+            <button class="btn ghost block" onClick={() => { cancel.current?.abort(); check(true); }}>{t('player.audio.stop')}</button>
+          </>
+        ) : canMake ? (
+          <>
+            <p class="muted small">{t('reader.audio.need', { requests: prep.missing.length })}</p>
+            <button class="btn primary block" onClick={() => make(prep.missing)}>{t('reader.audio.make')}</button>
+          </>
+        ) : (
+          <p class="muted small">{t('player.audio.unavailable')}</p>
+        )}
+        {error && <p class="status error small">{error}</p>}
+      </section>
+      {textCard(-1)}
+      <p class="muted tiny center">{t('reader.tapWordHint')}</p>
+      <button class="btn ghost block" onClick={onEdit}>{t('reader.edit')}</button>
+    </>
+  );
+}
+
+function ReaderPlayer({ session, sentences, textCard }: {
+  session: ReaderSession;
+  sentences: string[];
+  textCard: (current: number, onSentence: (i: number) => void, has: Set<number>) => JSX.Element;
+}) {
+  const { t, settings, update } = useApp();
+  const [mode, setMode] = useState<Mode>('continuous');
+  const [rate, setRate] = useState(settings.speech.rate);
+  const [loop, setLoop] = useState(false);
+  const player = useAudioTimeline(session, {
+    rate,
+    loop,
+    stopAfterEach: mode === 'sentence',
+    label: (p) => ({ title: sentences[session.order[p]] ?? 'Wordly', artist: t('more.reader') }),
+  });
+  const has = useMemo(() => new Set(session.order), [session]);
+  const current = session.order[player.pos];
+
+  return (
+    <>
+      {player.playError && <p class="status error small">{t('player.audio.playError')}</p>}
+      <div class="segmented reader-mode">
+        {(['continuous', 'sentence'] as Mode[]).map((m) => (
+          <button key={m} class={mode === m ? 'on' : ''} aria-pressed={mode === m} onClick={() => setMode(m)}>
+            {m === 'continuous' ? t('reader.continuous') : t('reader.sentence')}
+          </button>
+        ))}
+      </div>
+      {textCard(player.playing || mode === 'sentence' || player.pos > 0 ? current : -1, (i) => {
+        const p = session.order.indexOf(i);
+        if (p >= 0) player.seekTo(p);
+      }, has)}
+      <p class="muted tiny center">{t('reader.tapHint')}</p>
+      <Transport playing={player.playing} onPrev={player.prev} onToggle={player.toggle} onNext={player.next} />
+      <SpeedLoop rate={rate} onRate={(r) => { setRate(r); update((s) => ({ speech: { ...s.speech, rate: r } })); }} loop={loop} onLoop={setLoop} />
+      <p class="muted tiny center">{t('reader.audio.lockOk')}</p>
+    </>
   );
 }
 

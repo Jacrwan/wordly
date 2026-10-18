@@ -12,7 +12,7 @@ import { splitAtPauses } from './split';
 // where one word ends (split.ts) and keeps a long list from sounding monotonous.
 
 // The podcast's two-speaker request shape (known to work with the Flash TTS models).
-const SPEAKERS = [{ speaker: 'Mina', voice: 'Kore' }, { speaker: 'Jake', voice: 'Puck' }];
+export const SPEAKERS = [{ speaker: 'Mina', voice: 'Kore' }, { speaker: 'Jake', voice: 'Puck' }];
 const DETAIL: ClipDetail = 'full';
 // Invalidate clips produced by the earlier, inaccurate length-only splitter.
 const CLIP_VERSION = 2;
@@ -64,7 +64,7 @@ export async function makeClips(conn: Conn, models: string[], items: ClipItem[],
     onProgress({ done: made, total: items.length });
     try {
       const texts = batch.map(clipText);
-      const { pcm, model } = await synthesize(conn, models, ttsBody(texts), { cancel, onWait: (waitMs) => onProgress({ done: made, total: items.length, waitMs }) });
+      const { pcm, model } = await synthesize(conn, models, hostsBody(texts, (i) => i % 2), { cancel, onWait: (waitMs) => onProgress({ done: made, total: items.length, waitMs }) });
       if (cancel.aborted) return { made, stopped: 'cancelled' };
       const voices = batch.map((_, i) => i % 2);
       const pieces = splitAtPauses(pcm, texts.map((t) => t.split('\n')), voices);
@@ -109,9 +109,10 @@ export function batches(items: ClipItem[]): ClipItem[][] {
   return out;
 }
 
-function ttsBody(texts: string[]): object {
+/** A TTS request with one text part per item, each read by host `host(i)` (0 = Mina, 1 = Jake). */
+export function hostsBody(texts: string[], host: (i: number) => number): object {
   return {
-    contents: [{ role: 'user', parts: texts.map((text, i) => ({ text, speechMetadata: { speaker: SPEAKERS[i % 2].speaker } })) }],
+    contents: [{ role: 'user', parts: texts.map((text, i) => ({ text, speechMetadata: { speaker: SPEAKERS[host(i)].speaker } })) }],
     generationConfig: {
       responseModalities: ['AUDIO'],
       speechConfig: {
