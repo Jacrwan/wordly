@@ -7,7 +7,7 @@ import { pathToFileURL } from 'node:url';
 const build = await rolldown({ input: 'src/speech/edges.ts', platform: 'node', transform: { define: { 'import.meta.env': '{}' } } });
 const dir = await mkdtemp(join(tmpdir(), 'wordly-edges-'));
 await build.write({ file: join(dir, 'edges.mjs'), format: 'esm' });
-const { speechSpan, blobSpan } = await import(pathToFileURL(join(dir, 'edges.mjs')));
+const { speechSpan, blobSpan, silenceBursts } = await import(pathToFileURL(join(dir, 'edges.mjs')));
 await rm(dir, { recursive: true });
 
 const RATE = 24000;
@@ -72,4 +72,44 @@ const near = (got, want, tol = 0.1) => Math.abs(got - want) <= tol;
   assert.ok(near(b / 2 / RATE, 8.88), `blobSpan end ${b / 2 / RATE}`);
   assert.equal(b % 2, 0, 'byte offset on a sample boundary');
 }
-console.log('Static at the edges is removed; speech, short fricatives and clean audio are kept.');
+// The real end-of-response burst (measured: ~150 ms, RMS 12,600 → 20,000, ZCR 0.12–0.24, right
+// after ~150 ms of near-silence, still loud when the audio stops). A 300 Hz tone crosses zero at
+// ZCR 0.025, rising amplitude gives the rising RMS.
+const burst = (s = 0.15) => {
+  const n = Math.round(s * RATE);
+  return Int16Array.from({ length: n }, (_, i) => (17800 + 10500 * (i / n)) * Math.sin((2 * Math.PI * 300 * i) / RATE));
+};
+// 8. Speech, a short pause, then the burst to the very end: cut back to the speech.
+{
+  const pcm = join_(silence(0.3), voiced(1.2), silence(0.3), voiced(0.9), silence(0.15), burst());
+  const [a, b] = secs(speechSpan(pcm));
+  assert.equal(a, 0);
+  assert.ok(b <= 2.7 + 0.15 && b >= 2.7, `end burst removed (end ${b}, speech ends 2.70, burst starts 2.85)`);
+  // Through the edge-only reader used for cached clips too.
+  const long = join_(silence(0.3), voiced(4), silence(0.5), voiced(3), silence(0.15), burst());
+  const [, bb] = await blobSpan(new Blob([long.buffer]));
+  assert.ok(near(bb / 2 / RATE, 7.88, 0.08), `cached clip burst removed (end ${bb / 2 / RATE})`);
+}
+// 9. A short final word at normal loudness followed by silence is kept.
+{
+  const pcm = join_(silence(0.3), voiced(1.2), silence(0.2), voiced(0.3), silence(0.4));
+  assert.deepEqual(speechSpan(pcm), [0, pcm.length], 'short last word kept');
+}
+// 10. Podcast joined from chunks: the burst at a join is silenced (length kept); a loud word that
+// fades out naturally is not.
+{
+  const fadeWord = (s) => { const w = voiced(s); for (let i = 0; i < w.length; i++) w[i] *= 2.2 * (1 - i / w.length); return w; };
+  const chunk1 = join_(silence(0.3), voiced(2), silence(0.3), fadeWord(0.3), silence(0.15), burst());
+  const chunk2 = join_(silence(0.25), voiced(2), silence(0.15), burst());
+  const pcm = join_(chunk1, chunk2);
+  const before = pcm.length;
+  const loudWordAt = Math.round((0.3 + 2 + 0.3 + 0.1) * RATE);
+  const loudWordSample = pcm[loudWordAt];
+  const n = silenceBursts(pcm);
+  assert.equal(n, 2, `both bursts silenced (got ${n})`);
+  assert.equal(pcm.length, before, 'length unchanged');
+  assert.equal(pcm[loudWordAt], loudWordSample, 'fading loud word untouched');
+  const burstMid = chunk1.length - Math.round(0.07 * RATE);
+  assert.equal(pcm[burstMid], 0, 'burst samples zeroed');
+}
+console.log('Static and the end-of-response burst are removed; speech, short words, fricatives and clean audio are kept.');

@@ -105,6 +105,7 @@ export interface Podcast {
   script: unknown;
   audio: Blob | null;
   audioSource: 'gemini' | 'webspeech';
+  cleaned?: boolean; // end-of-response bursts removed from the audio (see speech/edges.ts)
   createdAt: number;
 }
 

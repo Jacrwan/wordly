@@ -1,6 +1,6 @@
 import { chatModels, connFrom, generateJSON, GeminiError, type Conn } from '../ai/gemini';
 import { RATE, synthesize, ttsModels, wavBlob } from '../ai/tts';
-import { speechSpan } from '../speech/edges';
+import { silenceBursts, speechSpan } from '../speech/edges';
 import { pickTargets, type Target } from '../chat/chat';
 import { db, type Level, type Podcast, type Settings } from '../db/schema';
 
@@ -206,6 +206,7 @@ export async function createEpisode(settings: Settings, level: Level): Promise<v
       script,
       audio: fallback ? null : wavBlob(pcm),
       audioSource: fallback ? 'webspeech' : 'gemini',
+      cleaned: true,
       createdAt: Date.now(),
     };
     const id = await db.podcasts.add(row);
@@ -213,6 +214,19 @@ export async function createEpisode(settings: Settings, level: Level): Promise<v
   } catch (e) {
     set({ status: 'error', message: e instanceof GeminiError && e.kind === 'rate-limit' ? 'busy' : (e as Error).message });
   }
+}
+
+/**
+ * The episode's audio without the bursts Gemini TTS leaves at the end of each chunk. Episodes
+ * made before chunks were cleaned are fixed once (bursts silenced in place, so the transcript
+ * timing still matches) and saved.
+ */
+export async function episodeAudio(ep: Podcast): Promise<Blob> {
+  if (!ep.audio || ep.cleaned) return ep.audio!;
+  const pcm = new Int16Array((await ep.audio.arrayBuffer()).slice(44));
+  const audio = silenceBursts(pcm) ? wavBlob([pcm]) : ep.audio;
+  if (ep.id !== undefined) await db.podcasts.update(ep.id, { audio, cleaned: true }).catch(() => {});
+  return audio;
 }
 
 export function resetJob(): void {

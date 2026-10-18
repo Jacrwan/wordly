@@ -1,11 +1,14 @@
 import { RATE } from '../ai/tts';
 
-// Gemini TTS can end (or start) a response with a burst of static: loud, so silence trimming
-// keeps it, and heard as a harsh "chzz" at the end of a word list or text before it loops.
-// Static has no voicing, while every spoken word has vowels, so loud stretches at the edges with
-// no voiced frames are dropped, and a long voiceless tail stuck to the last word is cut short.
-// Voicing is judged by zero-crossing rate (vowels cross zero rarely; hiss and static constantly),
-// which is cheap enough to run on every clip.
+// Every Gemini TTS response ends with a ~150 ms burst at nearly full volume after the speech has
+// gone silent (measured on real responses: RMS 12,000–20,000, rising until the audio stops). It
+// is loud, so silence trimming kept it, and it was heard as a harsh "chzz" at the end of a word
+// list or text before it looped, and at every chunk join inside a podcast. Two kinds of noise are
+// removed at the edges of a response:
+// - the burst: a short loud stretch after a pause that runs right up to the end of the audio
+//   (speech always fades out before a response ends);
+// - static with no voicing (judged by zero-crossing rate: vowels cross zero rarely, hiss
+//   constantly), including a long voiceless tail stuck to the last word.
 
 const FRAME = RATE / 50; // 20 ms
 const PAUSE_FRAMES = 5; // 100 ms of quiet separates two stretches of sound
@@ -13,9 +16,12 @@ const MAX_ZCR_VOICED = 0.22;
 const MIN_VOICED_FRAMES = 3; // a stretch with fewer voiced frames than this is not speech
 const MAX_UNVOICED_TAIL = 15; // 300 ms: longer than any final "s"/"sh" the voice makes
 const KEEP_TAIL = 4; // 80 ms of a final fricative is kept
+const BURST_FRAMES = 20; // 400 ms: the burst is ~150 ms
+const BURST_RMS = 8000;
 const PAD = Math.round(RATE * 0.08);
 
 interface Frame {
+  rms: number;
   loud: boolean;
   voiced: boolean;
 }
@@ -36,7 +42,7 @@ function frames(pcm: Int16Array): Frame[] {
   }
   const loudLevel = [...rms].sort((a, b) => a - b)[Math.floor(n * 0.9)] ?? 0;
   const threshold = Math.max(120, loudLevel * 0.06);
-  return Array.from(rms, (r, f) => ({ loud: r >= threshold, voiced: r >= threshold && zcr[f] < MAX_ZCR_VOICED }));
+  return Array.from(rms, (r, f) => ({ rms: r, loud: r >= threshold, voiced: r >= threshold && zcr[f] < MAX_ZCR_VOICED }));
 }
 
 /** Stretches of sound [start, end) in frames, split at pauses of PAUSE_FRAMES or more. */
@@ -66,19 +72,32 @@ const voicedIn = (fr: Frame[], [a, b]: [number, number]) => {
   return n;
 };
 
+const peak = (fr: Frame[], [a, b]: [number, number]) => {
+  let p = 0;
+  for (let f = a; f < b; f++) p = Math.max(p, fr[f].rms);
+  return p;
+};
+
+/** The end-of-response burst: short, loud, after a pause, and still loud when the audio stops. */
+const isEndBurst = (fr: Frame[], st: [number, number][], i: number) =>
+  i > 0 && st[i][1] >= fr.length - PAUSE_FRAMES && st[i][1] - st[i][0] <= BURST_FRAMES && peak(fr, st[i]) >= BURST_RMS;
+
 /**
- * The part of `pcm` [start, end) in samples without static at its edges. `edges` limits the
+ * The part of `pcm` [start, end) in samples without noise at its edges. `edges` limits the
  * check to one side (for a window cut from the middle of a longer clip).
  */
 export function speechSpan(pcm: Int16Array, edges: { start?: boolean; end?: boolean } = { start: true, end: true }): [number, number] {
   const fr = frames(pcm);
   const st = stretches(fr);
-  // Keep at least one stretch with speech, whatever the edges look like.
+  if (!st.length) return [0, pcm.length];
+  const speech = (i: number) => voicedIn(fr, st[i]) >= MIN_VOICED_FRAMES;
   let lo = 0;
   let hi = st.length - 1;
-  if (edges.end) while (hi > lo && voicedIn(fr, st[hi]) < MIN_VOICED_FRAMES) hi--;
-  if (edges.start) while (lo < hi && voicedIn(fr, st[lo]) < MIN_VOICED_FRAMES) lo++;
-  if (!st.length || voicedIn(fr, st[hi]) < MIN_VOICED_FRAMES) return [0, pcm.length];
+  if (edges.end && isEndBurst(fr, st, hi)) hi--;
+  // Keep at least one stretch with speech, whatever the edges look like.
+  if (edges.end) while (hi > lo && !speech(hi)) hi--;
+  if (edges.start) while (lo < hi && !speech(lo)) lo++;
+  if (!speech(hi)) return hi === st.length - 1 ? [0, pcm.length] : [0, Math.min(st[hi + 1][0] * FRAME, st[hi][1] * FRAME + PAD)];
 
   let start = 0;
   let end = pcm.length;
@@ -87,7 +106,7 @@ export function speechSpan(pcm: Int16Array, edges: { start?: boolean; end?: bool
     let v = b - 1;
     while (!fr[v].voiced) v--;
     if (b - 1 - v > MAX_UNVOICED_TAIL) end = (v + 1 + KEEP_TAIL) * FRAME; // static stuck to the last word
-    else if (hi < st.length - 1) end = Math.min(st[hi + 1][0] * FRAME, b * FRAME + PAD); // static after a pause
+    else if (hi < st.length - 1) end = Math.min(st[hi + 1][0] * FRAME, b * FRAME + PAD); // noise after a pause
   }
   if (edges.start) {
     const [a] = st[lo];
@@ -97,6 +116,28 @@ export function speechSpan(pcm: Int16Array, edges: { start?: boolean; end?: bool
     else if (lo > 0) start = Math.max(st[lo - 1][1] * FRAME, a * FRAME - PAD);
   }
   return [start, Math.max(start, end)];
+}
+
+/**
+ * Silences end-of-response bursts inside audio joined from several responses (podcast episodes
+ * made before chunks were cleaned), keeping its length so transcript timing still matches. A
+ * burst there is a short loud stretch after a pause that is cut off while still loud (rising to
+ * its last frame, then digital silence), which speech never is. Returns how many were silenced.
+ */
+export function silenceBursts(pcm: Int16Array): number {
+  const fr = frames(pcm);
+  const st = stretches(fr);
+  let n = 0;
+  st.forEach(([a, b], i) => {
+    if (i === 0 || b - a > BURST_FRAMES) return;
+    const top = peak(fr, [a, b]);
+    const lastLoud = fr[b - 1].rms >= top * 0.6;
+    const thenSilent = b >= fr.length || fr[b].rms < 50;
+    if (top < BURST_RMS || !lastLoud || !thenSilent) return;
+    pcm.fill(0, a * FRAME, Math.min(pcm.length, b * FRAME));
+    n++;
+  });
+  return n;
 }
 
 const WINDOW_BYTES = RATE * 2 * 3; // 3 s
