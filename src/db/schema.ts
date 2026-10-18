@@ -105,6 +105,7 @@ export interface Podcast {
   script: unknown;
   audio: Blob | null;
   audioSource: 'gemini' | 'webspeech';
+  cleaned?: boolean; // end-of-response bursts removed from the audio (see speech/edges.ts)
   createdAt: number;
 }
 
@@ -116,6 +117,7 @@ export interface WordClip {
   text: string; // what was read; a different text (e.g. a refreshed definition) means a new clip
   voice: string;
   pcm: Blob; // raw 16-bit 24 kHz mono samples
+  span?: [number, number]; // bytes of pcm without static at the edges (see speech/edges.ts); set once
   seconds: number;
   model: string;
   createdAt: number;
@@ -126,6 +128,7 @@ export type ClipDetail = 'full';
 export interface ReaderClip {
   key: string; // hash of version, voice and the sentences
   pcm: Blob; // raw 16-bit 24 kHz mono samples
+  span?: [number, number]; // bytes of pcm without static at the edges (see speech/edges.ts); set once
   starts: number[]; // seconds into pcm, one per sentence
   ends: number[];
   model: string;

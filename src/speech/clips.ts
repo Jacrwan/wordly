@@ -1,6 +1,7 @@
 import { GeminiError, type Conn } from '../ai/gemini';
 import { RATE, synthesize, wavBlob } from '../ai/tts';
 import { db, type ClipDetail, type WordClip } from '../db/schema';
+import { blobSpan, speechSpan } from './edges';
 import { splitAtPauses } from './split';
 
 // Lock-screen word player: each saved word's segment (word → Korean → definition → synonyms)
@@ -64,8 +65,10 @@ export async function makeClips(conn: Conn, models: string[], items: ClipItem[],
     onProgress({ done: made, total: items.length });
     try {
       const texts = batch.map(clipText);
-      const { pcm, model } = await synthesize(conn, models, hostsBody(texts, (i) => i % 2), { cancel, onWait: (waitMs) => onProgress({ done: made, total: items.length, waitMs }) });
+      const res = await synthesize(conn, models, hostsBody(texts, (i) => i % 2), { cancel, onWait: (waitMs) => onProgress({ done: made, total: items.length, waitMs }) });
       if (cancel.aborted) return { made, stopped: 'cancelled' };
+      const pcm = res.pcm.subarray(...speechSpan(res.pcm));
+      const model = res.model;
       const voices = batch.map((_, i) => i % 2);
       const pieces = splitAtPauses(pcm, texts.map((t) => t.split('\n')), voices);
       const now = Date.now();
@@ -76,6 +79,7 @@ export async function makeClips(conn: Conn, models: string[], items: ClipItem[],
         text: texts[i],
         voice: SPEAKERS[voices[i]].voice,
         pcm: new Blob([pieces[i].slice().buffer as ArrayBuffer], { type: 'audio/L16' }),
+        span: [0, pieces[i].length * 2] as [number, number],
         seconds: pieces[i].length / RATE,
         model,
         createdAt: now,
@@ -133,8 +137,19 @@ export interface Session {
   duration: number;
 }
 
+/** Where a cached clip's speech is, without static at its edges; worked out once and saved. */
+export async function clipSpan(clip: WordClip): Promise<[number, number]> {
+  if (clip.span) return clip.span;
+  const span = await blobSpan(clip.pcm);
+  clip.span = span;
+  await db.wordClips.update([clip.word, clip.detail], { span }).catch(() => {});
+  return span;
+}
+
 /** Joins the cached clips of a list into one WAV (clips are referenced, not copied). */
-export function buildSession(items: ClipItem[], clips: Map<string, WordClip>): Session | null {
+export async function buildSession(items: ClipItem[], clips: Map<string, WordClip>): Promise<Session | null> {
+  const spans = new Map<string, [number, number]>();
+  for (const clip of clips.values()) spans.set(clip.word, await clipSpan(clip));
   const silence = (s: number) => new Int16Array(Math.round(s * RATE));
   const parts: (Int16Array | Blob)[] = [silence(LEAD_S)];
   const order: number[] = [];
@@ -149,8 +164,9 @@ export function buildSession(items: ClipItem[], clips: Map<string, WordClip>): S
     }
     order.push(i);
     starts.push(t);
-    parts.push(clip.pcm);
-    t += clip.pcm.size / 2 / RATE;
+    const [a, b] = spans.get(it.key)!;
+    parts.push(clip.pcm.slice(a, b));
+    t += (b - a) / 2 / RATE;
   });
   if (!order.length) return null;
   parts.push(silence(GAP_S));

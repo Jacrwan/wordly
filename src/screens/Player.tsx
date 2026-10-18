@@ -123,7 +123,8 @@ function AudioPlayer({ items, rate, onRate, loop, onLoop }: PlayerProps) {
     const clips = await cachedClips(items);
     if (!alive.current) return;
     const missing = items.filter((it) => !clips.has(it.key));
-    const session = buildSession(items, clips);
+    const session = await buildSession(items, clips);
+    if (!alive.current) return;
     if (session && (!missing.length || playPartial)) setPrep({ phase: 'ready', session, partial: missing.length > 0 });
     else setPrep({ phase: 'need', missing, ready: clips.size });
   };

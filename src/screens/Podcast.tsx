@@ -6,7 +6,7 @@ import { Page } from '../components/Layout';
 import { db, type Level, type Podcast as Episode } from '../db/schema';
 import { useLive } from '../hooks/useLive';
 import type { StringKey } from '../i18n';
-import { createEpisode, HOSTS, jobState, onJob, podcastWords, resetJob, type Script } from '../podcast/podcast';
+import { createEpisode, episodeAudio, HOSTS, jobState, onJob, podcastWords, resetJob, type Script } from '../podcast/podcast';
 import { go, href } from '../router';
 import { setMediaSession, SpeechQueue, type QueueState, type Segment } from '../speech/engine';
 import { useApp } from '../state';
@@ -148,13 +148,22 @@ function EpisodeScreen({ id }: { id: number }) {
 function AudioEpisode({ ep, script, onWord }: { ep: Episode; script: Script; onWord: (w: string) => void }) {
   const { t, settings } = useApp();
   const audio = useRef<HTMLAudioElement | null>(null);
-  const url = useMemo(() => URL.createObjectURL(ep.audio!), [ep.id]);
+  const [url, setUrl] = useState<string | null>(null);
   const [playing, setPlaying] = useState(false);
   const [time, setTime] = useState(0);
   const [rate, setRate] = useState(settings.speech.rate);
   const duration = script.duration ?? 0;
 
   useEffect(() => {
+    let live = true;
+    episodeAudio(ep).then((blob) => live && setUrl(URL.createObjectURL(blob)), () => live && setUrl(URL.createObjectURL(ep.audio!)));
+    return () => {
+      live = false;
+    };
+  }, [ep.id]);
+
+  useEffect(() => {
+    if (!url) return;
     const el = new Audio(url);
     el.preload = 'auto';
     audio.current = el;

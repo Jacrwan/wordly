@@ -3,6 +3,7 @@ import { RATE, synthesize, wavBlob } from '../ai/tts';
 import { db, type ReaderClip } from '../db/schema';
 import type { Timeline } from '../hooks/useAudioTimeline';
 import { hostsBody, SPEAKERS } from './clips';
+import { blobSpan, speechSpan } from './edges';
 import { splitAtPauses } from './split';
 
 // Text reader audio: the text is voiced by Gemini TTS in runs of sentences (one request each),
@@ -66,10 +67,11 @@ export async function makeRuns(conn: Conn, models: string[], sentences: string[]
     onProgress({ done: made, total: runs.length });
     try {
       const texts = run.sentences.map((i) => sentences[i]);
-      const { pcm, model } = await synthesize(conn, models, hostsBody(texts, () => HOST), { cancel, onWait: (waitMs) => onProgress({ done: made, total: runs.length, waitMs }) });
+      const res = await synthesize(conn, models, hostsBody(texts, () => HOST), { cancel, onWait: (waitMs) => onProgress({ done: made, total: runs.length, waitMs }) });
       if (cancel.aborted) return { made, stopped: 'cancelled' };
+      const pcm = res.pcm.slice(...speechSpan(res.pcm));
       const { starts, ends } = sentenceTimes(pcm, texts);
-      await db.readerClips.put({ key: run.key, pcm: new Blob([pcm.slice().buffer as ArrayBuffer], { type: 'audio/L16' }), starts, ends, model, createdAt: Date.now() });
+      await db.readerClips.put({ key: run.key, pcm: new Blob([pcm.buffer as ArrayBuffer], { type: 'audio/L16' }), span: [0, pcm.length * 2], starts, ends, model: res.model, createdAt: Date.now() });
       made++;
     } catch (e) {
       if (cancel.aborted) return { made, stopped: 'cancelled' };
@@ -120,9 +122,8 @@ export interface ReaderSession extends Timeline {
  * followed by the same short silence (instead of the voice's own, sometimes very short pause), so
  * stopping or looping at a sentence's end never clips the start of the next one.
  */
-export function buildReaderSession(runs: Run[], clips: Map<string, ReaderClip>): ReaderSession | null {
+export async function buildReaderSession(runs: Run[], clips: Map<string, ReaderClip>): Promise<ReaderSession | null> {
   const silence = (s: number) => new Int16Array(Math.round(s * RATE));
-  const byte = (secs: number, size: number) => Math.min(size, Math.max(0, Math.round(secs * RATE) * 2));
   const parts: (Int16Array | Blob)[] = [silence(LEAD_S)];
   const order: number[] = [];
   const starts: number[] = [];
@@ -131,20 +132,27 @@ export function buildReaderSession(runs: Run[], clips: Map<string, ReaderClip>):
   for (const run of runs) {
     const clip = clips.get(run.key);
     if (!clip) continue;
-    const size = clip.pcm.size;
+    // Audio cached before static was trimmed at voicing time is trimmed here (worked out once).
+    if (!clip.span) {
+      clip.span = await blobSpan(clip.pcm);
+      await db.readerClips.update(clip.key, { span: clip.span }).catch(() => {});
+    }
+    const [lo, hi] = clip.span;
+    const byte = (secs: number) => Math.min(hi, Math.max(lo, Math.round(secs * RATE) * 2));
     run.sentences.forEach((s, i) => {
       const last = i === run.sentences.length - 1;
       // Timing shared out by length (no pauses found) leaves no gap between sentences: keep those
       // pieces back to back so nothing is cut out of the middle of speech.
       const touching = !last && clip.ends[i] >= clip.starts[i + 1] - 0.01;
-      const from = byte(clip.starts[i], size);
-      const to = touching ? byte(clip.starts[i + 1], size) : last ? size : byte(clip.ends[i], size);
+      const from = byte(clip.starts[i]);
+      const to = touching ? byte(clip.starts[i + 1]) : last ? hi : byte(clip.ends[i]);
+      const secs = (to - from) / 2 / RATE;
       order.push(s);
       starts.push(t);
       // The last sentence keeps the run's trailing silence; its end is where the voice stops.
-      ends.push(last ? t + clip.ends[i] - clip.starts[i] : t + (to - from) / 2 / RATE);
+      ends.push(last ? t + Math.min(secs, clip.ends[i] - clip.starts[i]) : t + secs);
       parts.push(clip.pcm.slice(from, to));
-      t += (to - from) / 2 / RATE;
+      t += secs;
       if (!touching) {
         parts.push(silence(SENTENCE_GAP_S));
         t += SENTENCE_GAP_S;
