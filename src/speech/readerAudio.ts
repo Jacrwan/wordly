@@ -15,7 +15,7 @@ const HOST = 0; // Mina reads everything
 const CHUNK_CHARS = 1000; // ≈ 70 s of speech per request
 const KEEP = 60; // cached runs kept; older ones are dropped
 const LEAD_S = 0.3;
-const GAP_S = 0.35; // between runs (each run already has natural pauses inside)
+const SENTENCE_GAP_S = 0.5; // silence after every sentence
 
 export interface Run {
   sentences: number[]; // indexes into the text's sentences
@@ -115,9 +115,15 @@ export interface ReaderSession extends Timeline {
   order: number[]; // sentence indexes that have audio, in play order
 }
 
-/** Joins the cached runs into one WAV, with each sentence's start and end in it. */
+/**
+ * Joins the cached runs into one WAV, with each sentence's start and end in it. Every sentence is
+ * followed by the same short silence (instead of the voice's own, sometimes very short pause), so
+ * stopping or looping at a sentence's end never clips the start of the next one.
+ */
 export function buildReaderSession(runs: Run[], clips: Map<string, ReaderClip>): ReaderSession | null {
-  const parts: (Int16Array | Blob)[] = [new Int16Array(Math.round(LEAD_S * RATE))];
+  const silence = (s: number) => new Int16Array(Math.round(s * RATE));
+  const byte = (secs: number, size: number) => Math.min(size, Math.max(0, Math.round(secs * RATE) * 2));
+  const parts: (Int16Array | Blob)[] = [silence(LEAD_S)];
   const order: number[] = [];
   const starts: number[] = [];
   const ends: number[] = [];
@@ -125,19 +131,26 @@ export function buildReaderSession(runs: Run[], clips: Map<string, ReaderClip>):
   for (const run of runs) {
     const clip = clips.get(run.key);
     if (!clip) continue;
-    if (order.length) {
-      parts.push(new Int16Array(Math.round(GAP_S * RATE)));
-      t += GAP_S;
-    }
+    const size = clip.pcm.size;
     run.sentences.forEach((s, i) => {
+      const last = i === run.sentences.length - 1;
+      // Timing shared out by length (no pauses found) leaves no gap between sentences: keep those
+      // pieces back to back so nothing is cut out of the middle of speech.
+      const touching = !last && clip.ends[i] >= clip.starts[i + 1] - 0.01;
+      const from = byte(clip.starts[i], size);
+      const to = touching ? byte(clip.starts[i + 1], size) : last ? size : byte(clip.ends[i], size);
       order.push(s);
-      starts.push(t + clip.starts[i]);
-      ends.push(t + clip.ends[i]);
+      starts.push(t);
+      // The last sentence keeps the run's trailing silence; its end is where the voice stops.
+      ends.push(last ? t + clip.ends[i] - clip.starts[i] : t + (to - from) / 2 / RATE);
+      parts.push(clip.pcm.slice(from, to));
+      t += (to - from) / 2 / RATE;
+      if (!touching) {
+        parts.push(silence(SENTENCE_GAP_S));
+        t += SENTENCE_GAP_S;
+      }
     });
-    parts.push(clip.pcm);
-    t += clip.pcm.size / 2 / RATE;
   }
   if (!order.length) return null;
-  parts.push(new Int16Array(Math.round(GAP_S * RATE)));
   return { audio: wavBlob(parts), order, starts, ends };
 }
